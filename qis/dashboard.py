@@ -56,7 +56,7 @@ def _html(metrics: dict[str, str], payload: str) -> str:
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>QIS Risk Console</title>
+  <title>QIS 风控记录</title>
   <style>
     :root {{
       --ink: #172026;
@@ -98,7 +98,7 @@ def _html(metrics: dict[str, str], payload: str) -> str:
       padding: 16px;
       box-shadow: var(--shadow);
     }}
-    .label {{ color: var(--muted); font-size: 12px; text-transform: uppercase; }}
+    .label {{ color: var(--muted); font-size: 12px; }}
     .value {{ margin-top: 8px; font-size: 24px; font-weight: 700; }}
     .toolbar {{
       display: flex;
@@ -157,26 +157,26 @@ def _html(metrics: dict[str, str], payload: str) -> str:
 </head>
 <body>
   <header>
-    <h1>QIS Risk Console</h1>
-    <div class="sub">半自动 OKX 交易系统，本页展示最近交易计划和风控状态。</div>
+    <h1>风控记录</h1>
+    <div class="sub">展示最近交易计划、风控通过状态、名义仓位和单笔风险。</div>
   </header>
   <main>
     <section class="metrics">
-      <div class="metric"><div class="label">Plans</div><div class="value">{html.escape(metrics["plans"])}</div></div>
-      <div class="metric"><div class="label">Approved</div><div class="value">{html.escape(metrics["approved"])}</div></div>
-      <div class="metric"><div class="label">Rejected</div><div class="value">{html.escape(metrics["rejected"])}</div></div>
-      <div class="metric"><div class="label">Risk USDT</div><div class="value">{html.escape(metrics["risk"])}</div></div>
-      <div class="metric"><div class="label">Notional USDT</div><div class="value">{html.escape(metrics["notional"])}</div></div>
+      <div class="metric"><div class="label">计划数</div><div class="value">{html.escape(metrics["plans"])}</div></div>
+      <div class="metric"><div class="label">已通过</div><div class="value">{html.escape(metrics["approved"])}</div></div>
+      <div class="metric"><div class="label">已拒绝</div><div class="value">{html.escape(metrics["rejected"])}</div></div>
+      <div class="metric"><div class="label">风险金额 USDT</div><div class="value">{html.escape(metrics["risk"])}</div></div>
+      <div class="metric"><div class="label">名义仓位 USDT</div><div class="value">{html.escape(metrics["notional"])}</div></div>
     </section>
     <div class="toolbar">
-      <strong>Recent Plans</strong>
-      <input id="filter" placeholder="Filter by symbol, side, reason">
+      <strong>最近交易计划</strong>
+      <input id="filter" placeholder="按币种、方向、原因筛选">
     </div>
     <table>
       <thead>
         <tr>
-          <th>ID</th><th>Time</th><th>Symbol</th><th>Side</th><th>Status</th>
-          <th>Entry</th><th>Stop</th><th>Size</th><th>Risk</th><th>Reason</th>
+          <th>ID</th><th>时间</th><th>币种</th><th>方向</th><th>状态</th>
+          <th>入场</th><th>止损</th><th>数量</th><th>风险</th><th>原因</th>
         </tr>
       </thead>
       <tbody id="rows"></tbody>
@@ -196,8 +196,8 @@ def _html(metrics: dict[str, str], payload: str) -> str:
             <td>#${{p.id}}</td>
             <td>${{p.created_at}}</td>
             <td>${{p.inst_id}}</td>
-            <td><span class="tag ${{p.side}}">${{p.side.toUpperCase()}}</span></td>
-            <td><span class="tag ${{p.approved ? 'ok' : 'no'}}">${{p.approved ? 'APPROVED' : 'REJECTED'}}</span></td>
+            <td><span class="tag ${{p.side}}">${{p.side === 'buy' ? '做多' : '做空'}}</span></td>
+            <td><span class="tag ${{p.approved ? 'ok' : 'no'}}">${{p.approved ? '通过' : '拒绝'}}</span></td>
             <td>${{fmt(p.entry)}}</td>
             <td>${{fmt(p.stop)}}</td>
             <td>${{fmt(p.size)}}</td>

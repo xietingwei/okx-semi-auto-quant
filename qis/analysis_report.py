@@ -50,7 +50,7 @@ def _html(
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>QIS Opportunity Report</title>
+  <title>QIS 机会看盘</title>
   <style>
     :root {{
       --ink:#18212a; --muted:#63717f; --line:#d9e1e8; --paper:#f5f7f4;
@@ -75,7 +75,7 @@ def _html(
       background:var(--panel); border:1px solid var(--line); border-radius:8px;
       padding:16px; box-shadow:var(--shadow);
     }}
-    .label {{ color:var(--muted); font-size:12px; text-transform:uppercase; }}
+    .label {{ color:var(--muted); font-size:12px; }}
     .value {{ margin-top:8px; font-size:24px; font-weight:750; }}
     table {{
       width:100%; border-collapse:collapse; background:white; border:1px solid var(--line);
@@ -103,28 +103,28 @@ def _html(
 </head>
 <body>
   <header>
-    <h1>QIS Opportunity Report</h1>
-    <div class="sub">similarity_bayes_macro_intel_v3；默认只展示成功率不低于 {min_success * 100:.1f}% 的候选。概率是统计估计，不是保证。</div>
+    <h1>机会看盘</h1>
+    <div class="sub">模型：similarity_bayes_macro_intel_v3。默认只展示成功率不低于 {min_success * 100:.1f}% 的候选；概率是盘前统计估计，不是保证。</div>
   </header>
   <main>
     <section class="summary">
-      <div class="metric"><div class="label">Top Setup</div><div class="value">{headline}</div></div>
-      <div class="metric"><div class="label">Candidates</div><div class="value">{len(opportunities)}</div></div>
-      <div class="metric"><div class="label">Active</div><div class="value">{sum(1 for item in opportunities if item.status == "active")}</div></div>
-      <div class="metric"><div class="label">Macro</div><div class="value" style="font-size:14px">{html.escape(macro_text)}</div></div>
-      <div class="metric"><div class="label">External Intel</div><div class="value" style="font-size:14px">{html.escape(intel_text)}</div></div>
-      <div class="metric"><div class="label">Real Calibration</div><div class="value" style="font-size:14px">{html.escape(calibration_text)}</div></div>
+      <div class="metric"><div class="label">首选机会</div><div class="value">{headline}</div></div>
+      <div class="metric"><div class="label">候选数量</div><div class="value">{len(opportunities)}</div></div>
+      <div class="metric"><div class="label">已触发</div><div class="value">{sum(1 for item in opportunities if item.status == "active")}</div></div>
+      <div class="metric"><div class="label">宏观环境</div><div class="value" style="font-size:14px">{html.escape(macro_text)}</div></div>
+      <div class="metric"><div class="label">外部资讯</div><div class="value" style="font-size:14px">{html.escape(intel_text)}</div></div>
+      <div class="metric"><div class="label">实盘校准</div><div class="value" style="font-size:14px">{html.escape(calibration_text)}</div></div>
     </section>
     <section class="metric" style="margin-bottom:18px">
-      <div class="label">Referenced Headlines</div>
+      <div class="label">参考资讯标题</div>
       <ul style="margin:10px 0 0; padding-left:18px; color:var(--muted); line-height:1.5">{headline_rows}</ul>
     </section>
     <table>
       <thead>
         <tr>
-          <th>Rank</th><th>Symbol</th><th>Side</th><th>Status</th><th>Entry Zone</th>
-          <th>Stop</th><th>TP1</th><th>TP2</th><th>Success</th><th>Sample</th>
-          <th>Quality</th><th>ExpR</th><th>Score</th><th>Regime</th><th>Macro</th><th>Intel</th><th>Model</th><th>Reason</th>
+          <th>排名</th><th>类别</th><th>标的</th><th>方向</th><th>状态</th><th>入场区间</th>
+          <th>止损</th><th>止盈1</th><th>止盈2</th><th>估算胜率</th><th>样本</th>
+          <th>质量</th><th>期望R</th><th>评分</th><th>结构</th><th>宏观</th><th>资讯</th><th>模型</th><th>原因</th>
         </tr>
       </thead>
       <tbody>{rows}</tbody>
@@ -137,22 +137,25 @@ def _html(
 
 def _calibration_text(calibration: dict[str, float | int | None] | None) -> str:
     if not calibration or not calibration.get("trades"):
-        return "no manual trades yet"
+        return "暂无手动交易样本"
     win_rate = calibration.get("win_rate")
     avg_r = calibration.get("avg_r")
     trades = calibration.get("trades")
     profit_factor = calibration.get("profit_factor")
-    return f"{trades} trades; real win {float(win_rate) * 100:.1f}%; avgR {float(avg_r):.2f}; PF {float(profit_factor):.2f}"
+    return f"{trades} 笔；真实胜率 {float(win_rate) * 100:.1f}%；平均R {float(avg_r):.2f}；盈亏因子 {float(profit_factor):.2f}"
 
 
 def _row(index: int, item: Opportunity) -> str:
-    rank_note = " low sample" if item.sample_size < 8 else ""
+    rank_note = " 样本少" if item.sample_size < 8 else ""
+    side_text = "做多" if item.side.value == "buy" else "做空"
+    status_text = "已触发" if item.status == "active" else "观察"
     return f"""
         <tr>
           <td class="small">#{index}{rank_note}</td>
+          <td>{'股票类' if item.asset_class == 'stock' else '加密货币'}</td>
           <td>{html.escape(item.inst_id)}</td>
-          <td><span class="tag {item.side.value}">{item.side.value.upper()}</span></td>
-          <td><span class="tag {item.status}">{item.status.upper()}</span></td>
+          <td><span class="tag {item.side.value}">{side_text}</span></td>
+          <td><span class="tag {item.status}">{status_text}</span></td>
           <td>{item.entry_low:.4f} - {item.entry_high:.4f}</td>
           <td>{item.stop:.4f}</td>
           <td>{item.take_profit_1:.4f}</td>

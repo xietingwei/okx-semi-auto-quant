@@ -30,6 +30,7 @@ def test_market_analyzer_returns_opportunities() -> None:
 
     assert opportunities
     assert opportunities[0].inst_id == "BTC-USDT-SWAP"
+    assert opportunities[0].asset_class == "crypto"
     assert 0 <= opportunities[0].success_probability <= 1
     assert opportunities[0].model == "similarity_bayes_macro_intel_v3"
 
@@ -41,3 +42,9 @@ def test_macro_risk_on_boosts_long_probability() -> None:
     risk_on_long = next(item for item in risk_on if item.side.value == "buy")
 
     assert risk_on_long.success_probability > neutral_long.success_probability
+
+
+def test_market_analyzer_marks_stock_assets() -> None:
+    opportunities = MarketAnalyzer().analyze("NVDA-USDT-SWAP", _candles())
+
+    assert opportunities[0].asset_class == "stock"

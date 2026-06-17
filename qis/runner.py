@@ -71,7 +71,7 @@ class Runner:
         account = self._account_state()
         self.storage.save_account(account)
         plans: list[TradePlan] = []
-        for inst_id in self.settings.inst_ids:
+        for inst_id in tuple(dict.fromkeys(self.settings.inst_ids + self.settings.stock_inst_ids)):
             candles = self.client.public_candles(inst_id, self.settings.bar, limit=120)
             signal = self.strategy.generate(inst_id, candles)
             if signal is None:

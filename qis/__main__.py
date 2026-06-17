@@ -13,6 +13,7 @@ from qis.external_intel import ExternalIntelAnalyzer
 from qis.macro import MacroAnalyzer
 from qis.models import Mode
 from qis.okx import OkxClient, OkxError
+from qis.portal import render_portal
 from qis.risk import RiskEngine, RiskLimits
 from qis.runner import Runner
 from qis.storage import Storage
@@ -35,6 +36,8 @@ def main() -> None:
     status_parser.add_argument("--limit", type=int, default=10)
     dash_parser = sub.add_parser("dashboard", help="render local HTML dashboard")
     dash_parser.add_argument("--out", default="data/dashboard.html")
+    portal_parser = sub.add_parser("portal", help="render unified local web portal")
+    portal_parser.add_argument("--out", default="data/index.html")
     backtest_parser = sub.add_parser("backtest", help="backtest current strategy on OKX candles")
     backtest_parser.add_argument("--limit", type=int, default=300)
     backtest_parser.add_argument("--max-hold-bars", type=int, default=48)
@@ -90,7 +93,12 @@ def main() -> None:
         return
     if args.command == "dashboard":
         path = render_dashboard(Storage(settings.db_path), Path(args.out))
+        render_portal(Path("data/index.html"))
         print(f"Dashboard written to {path.resolve()}")
+        return
+    if args.command == "portal":
+        path = render_portal(Path(args.out))
+        print(f"Portal written to {path.resolve()}")
         return
     if args.command == "backtest":
         client = OkxClient(settings.okx_api_key, settings.okx_api_secret, settings.okx_api_passphrase, settings.okx_simulated)
@@ -145,7 +153,8 @@ def main() -> None:
             print("Real calibration: no manual trades recorded yet")
         analyzer = MarketAnalyzer(settings.donchian_lookback, settings.atr_period, settings.atr_multiplier, macro=macro, intel=intel)
         opportunities = []
-        for inst_id in settings.inst_ids:
+        scan_ids = tuple(dict.fromkeys(settings.inst_ids + settings.stock_inst_ids))
+        for inst_id in scan_ids:
             try:
                 candles = client.public_candles(inst_id, settings.bar, limit=args.limit)
             except OkxError as exc:
@@ -175,6 +184,7 @@ def main() -> None:
             intel=intel,
             calibration=stats,
         )
+        render_portal(Path("data/index.html"))
         print(f"Analysis report written to {path.resolve()}")
         return
     if args.command == "trade-add":

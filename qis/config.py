@@ -37,6 +37,7 @@ class Settings:
     pause_file: Path
     inst_id: str
     inst_ids: tuple[str, ...]
+    stock_inst_ids: tuple[str, ...]
     bar: str
     loop_seconds: int
     initial_equity: float
@@ -74,6 +75,14 @@ def load_settings() -> Settings:
                     "DOGE-USDT-SWAP,ADA-USDT-SWAP,LINK-USDT-SWAP,AVAX-USDT-SWAP,"
                     "BNB-USDT-SWAP,LTC-USDT-SWAP"
                 ),
+            ).split(",")
+            if item.strip()
+        ),
+        stock_inst_ids=tuple(
+            item.strip()
+            for item in os.environ.get(
+                "QIS_STOCK_INST_IDS",
+                "AAPL-USDT-SWAP,AMZN-USDT-SWAP,GOOGL-USDT-SWAP,META-USDT-SWAP,MSFT-USDT-SWAP,NVDA-USDT-SWAP,TSLA-USDT-SWAP",
             ).split(",")
             if item.strip()
         ),

@@ -11,6 +11,7 @@ from qis.strategy import DonchianBreakoutStrategy
 @dataclass(frozen=True)
 class Opportunity:
     inst_id: str
+    asset_class: str
     side: Side
     status: str
     close: float
@@ -124,6 +125,7 @@ class MarketAnalyzer:
         )
         return Opportunity(
             inst_id=inst_id,
+            asset_class=self._asset_class(inst_id),
             side=side,
             status=status,
             close=close,
@@ -293,6 +295,13 @@ class MarketAnalyzer:
         directional = self.macro.risk_score if side is Side.BUY else -self.macro.risk_score
         return max(-1.0, min(1.0, directional))
 
+    @staticmethod
+    def _asset_class(inst_id: str) -> str:
+        symbol = inst_id.split("-")[0]
+        if symbol in {"AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA"}:
+            return "stock"
+        return "crypto"
+
     def _intel_delta(self, side: Side) -> float:
         directional = self.intel.score if side is Side.BUY else -self.intel.score
         return max(-0.06, min(0.06, directional * 0.08))
@@ -306,12 +315,12 @@ def summarize_opportunities(opportunities: list[Opportunity], limit: int = 10) -
     if not opportunities:
         return "No opportunities found."
     header = (
-        "rank inst side status entry_zone stop tp1 tp2 success sample quality expR score regime macro intel model"
+        "rank asset inst side status entry_zone stop tp1 tp2 success sample quality expR score regime macro intel model"
     )
     lines = [header]
     for idx, item in enumerate(sorted(opportunities, key=lambda row: row.score, reverse=True)[:limit], start=1):
         lines.append(
-            f"{idx} {item.inst_id} {item.side.value} {item.status} "
+            f"{idx} {item.asset_class} {item.inst_id} {item.side.value} {item.status} "
             f"{item.entry_low:.4f}-{item.entry_high:.4f} {item.stop:.4f} "
             f"{item.take_profit_1:.4f} {item.take_profit_2:.4f} "
             f"{item.success_probability * 100:.1f}% {item.sample_size} "
