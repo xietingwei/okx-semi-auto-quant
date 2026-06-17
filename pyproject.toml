@@ -1,0 +1,9 @@
+[project]
+name = "okx-semi-auto-quant"
+version = "0.1.0"
+description = "Semi-automatic OKX quant trading system with strict risk controls."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
