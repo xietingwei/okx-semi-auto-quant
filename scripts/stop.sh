@@ -22,7 +22,6 @@ stop_process() {
   rm -f "$pid_file"
 }
 
-stop_process "报告刷新" "$DATA_DIR/refresh.pid"
 stop_process "系统自检" "$DATA_DIR/doctor.pid"
-stop_process "paper 监控" "$DATA_DIR/qis-run.pid"
+stop_process "现货预测" "$DATA_DIR/spot-watch.pid"
 stop_process "网页服务" "$DATA_DIR/web.pid"

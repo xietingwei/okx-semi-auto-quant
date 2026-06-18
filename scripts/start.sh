@@ -46,41 +46,27 @@ print(process.pid)
 PY
 }
 
-echo "[1/5] 生成中文看盘入口"
-"$PYTHON_BIN" -m qis dashboard
-"$PYTHON_BIN" -m qis portal
-
-echo "[2/5] 启动 paper 行情监控"
-if is_running "$DATA_DIR/qis-run.pid"; then
-  echo "监控已运行，PID $(cat "$DATA_DIR/qis-run.pid")"
+echo "[1/3] 启动现货预测刷新"
+if is_running "$DATA_DIR/spot-watch.pid"; then
+  echo "现货预测已运行，PID $(cat "$DATA_DIR/spot-watch.pid")"
 else
-  rm -f "$DATA_DIR/qis-run.pid"
-  pid="$(start_detached "$DATA_DIR/qis-run.pid" "$DATA_DIR/qis-run.log" \
-    "$PYTHON_BIN" -u -m qis run --paper)"
-  echo "监控已启动，PID $pid"
+  rm -f "$DATA_DIR/spot-watch.pid"
+  pid="$(start_detached "$DATA_DIR/spot-watch.pid" "$DATA_DIR/spot-watch.log" \
+    "$PYTHON_BIN" -u -m qis spot-watch --interval 300)"
+  echo "现货预测已启动，PID $pid"
 fi
 
-echo "[3/5] 启动本地网页服务"
+echo "[2/3] 启动现货决策台与交易登记 API"
 if is_running "$DATA_DIR/web.pid"; then
   echo "网页服务已运行，PID $(cat "$DATA_DIR/web.pid")"
 else
   rm -f "$DATA_DIR/web.pid"
   pid="$(start_detached "$DATA_DIR/web.pid" "$DATA_DIR/web.log" \
-    "$PYTHON_BIN" -u -m http.server "$WEB_PORT" --bind "$WEB_HOST")"
+    "$PYTHON_BIN" -u -m qis web --host "$WEB_HOST" --port "$WEB_PORT")"
   echo "网页服务已启动，PID $pid"
 fi
 
-echo "[4/5] 后台刷新宏观、资讯和全部标的"
-if is_running "$DATA_DIR/refresh.pid"; then
-  echo "报告刷新正在运行，PID $(cat "$DATA_DIR/refresh.pid")"
-else
-  rm -f "$DATA_DIR/refresh.pid"
-  pid="$(start_detached "$DATA_DIR/refresh.pid" "$DATA_DIR/refresh.log" \
-    "$PYTHON_BIN" -u -m qis analyze --top 30 --show-all)"
-  echo "报告刷新已启动，PID $pid"
-fi
-
-echo "[5/5] 后台运行系统自检"
+echo "[3/3] 后台运行系统自检"
 if is_running "$DATA_DIR/doctor.pid"; then
   echo "系统自检正在运行，PID $(cat "$DATA_DIR/doctor.pid")"
 else
@@ -91,7 +77,7 @@ else
 fi
 
 echo
-echo "QIS 已启动（paper 模式，不会真实下单）"
-echo "看盘地址: http://$WEB_HOST:$WEB_PORT/data/index.html"
+echo "QIS 现货决策台已启动（只分析与手动登记，不会自动下单）"
+echo "看盘地址: http://$WEB_HOST:$WEB_PORT/"
 echo "查看状态: bash scripts/status.sh"
 echo "停止系统: bash scripts/stop.sh"

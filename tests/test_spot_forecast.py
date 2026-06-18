@@ -1,0 +1,53 @@
+from datetime import datetime, timedelta, timezone
+
+from qis.models import Candle
+from qis.spot_forecast import SpotForecastEngine
+
+
+def _daily_candles(count: int = 320) -> list[Candle]:
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    candles = []
+    price = 100.0
+    for index in range(count):
+        price *= 1.001
+        candles.append(
+            Candle(
+                ts=start + timedelta(days=index),
+                open=price * 0.995,
+                high=price * 1.012,
+                low=price * 0.988,
+                close=price,
+                volume=1000 + index,
+            )
+        )
+    return candles
+
+
+def test_spot_forecast_has_all_horizons() -> None:
+    forecast = SpotForecastEngine().analyze("BTC-USDT", _daily_candles())
+
+    assert forecast is not None
+    assert [item.key for item in forecast.forecasts] == ["1d", "1w", "1m", "3m", "6m"]
+    assert all(item.low <= item.target <= item.high for item in forecast.forecasts)
+
+
+def test_spot_forecast_marks_equity_mapping() -> None:
+    forecast = SpotForecastEngine().analyze("NVDA-USDT-SWAP", _daily_candles())
+
+    assert forecast is not None
+    assert forecast.market_type == "股票映射行情"
+
+
+def test_spot_forecast_uses_live_price_without_polluting_closed_history() -> None:
+    quote_time = datetime(2026, 6, 18, 3, 20, tzinfo=timezone.utc)
+    forecast = SpotForecastEngine().analyze(
+        "BTC-USDT",
+        _daily_candles(),
+        live_price=150.0,
+        quote_time=quote_time,
+    )
+
+    assert forecast is not None
+    assert forecast.current_price == 150.0
+    assert forecast.quote_time == quote_time.isoformat()
+    assert forecast.quote_source == "OKX ticker"

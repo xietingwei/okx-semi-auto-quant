@@ -38,6 +38,9 @@ class Settings:
     inst_id: str
     inst_ids: tuple[str, ...]
     stock_inst_ids: tuple[str, ...]
+    spot_inst_ids: tuple[str, ...]
+    spot_auto_discover: bool
+    spot_max_assets: int
     bar: str
     loop_seconds: int
     initial_equity: float
@@ -93,6 +96,16 @@ def load_settings() -> Settings:
             ).split(",")
             if item.strip()
         ),
+        spot_inst_ids=tuple(
+            item.strip()
+            for item in os.environ.get(
+                "QIS_SPOT_INST_IDS",
+                "BTC-USDT,ETH-USDT,SOL-USDT,XRP-USDT,DOGE-USDT,ADA-USDT,LINK-USDT,AVAX-USDT,BNB-USDT,LTC-USDT",
+            ).split(",")
+            if item.strip()
+        ),
+        spot_auto_discover=os.environ.get("QIS_SPOT_AUTO_DISCOVER", "1") == "1",
+        spot_max_assets=_int("QIS_SPOT_MAX_ASSETS", 60),
         bar=os.environ.get("QIS_BAR", "15m"),
         loop_seconds=_int("QIS_LOOP_SECONDS", 60),
         initial_equity=_float("QIS_INITIAL_EQUITY", 5000),

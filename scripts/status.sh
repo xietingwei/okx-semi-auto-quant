@@ -22,23 +22,19 @@ show_process() {
   fi
 }
 
-show_process "paper 监控" "$DATA_DIR/qis-run.pid"
+show_process "现货预测" "$DATA_DIR/spot-watch.pid"
 show_process "网页服务" "$DATA_DIR/web.pid"
-show_process "报告刷新" "$DATA_DIR/refresh.pid"
 show_process "系统自检" "$DATA_DIR/doctor.pid"
 
-if curl -fsS --max-time 2 "http://$WEB_HOST:$WEB_PORT/data/index.html" >/dev/null 2>&1; then
-  echo "看盘 URL: http://$WEB_HOST:$WEB_PORT/data/index.html"
+if curl -fsS --max-time 2 "http://$WEB_HOST:$WEB_PORT/" >/dev/null 2>&1; then
+  echo "看盘 URL: http://$WEB_HOST:$WEB_PORT/"
 else
   echo "看盘 URL: 当前不可访问"
 fi
 
 echo
-echo "监控日志:"
-tail -n 5 "$DATA_DIR/qis-run.log" 2>/dev/null || true
-echo
-echo "刷新日志:"
-tail -n 5 "$DATA_DIR/refresh.log" 2>/dev/null || true
+echo "现货预测日志:"
+tail -n 8 "$DATA_DIR/spot-watch.log" 2>/dev/null || true
 echo
 echo "自检日志:"
 tail -n 8 "$DATA_DIR/doctor.log" 2>/dev/null || true

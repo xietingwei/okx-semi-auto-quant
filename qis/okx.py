@@ -68,6 +68,22 @@ class OkxClient:
             raise OkxError(f"instrument not found: {inst_id}")
         return data[0]
 
+    def public_instruments(self, inst_type: str) -> list[dict[str, Any]]:
+        return self._request(
+            "GET",
+            "/api/v5/public/instruments",
+            params={"instType": inst_type},
+            auth=False,
+        )
+
+    def public_tickers(self, inst_type: str) -> list[dict[str, Any]]:
+        return self._request(
+            "GET",
+            "/api/v5/market/tickers",
+            params={"instType": inst_type},
+            auth=False,
+        )
+
     def order_size_from_base(self, inst_id: str, base_size: float) -> str:
         instrument = self.public_instrument(inst_id)
         return self.contract_size_from_base(

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
+import time
 
 from qis.analysis_report import render_analysis_report
 from qis.analyzer import MarketAnalyzer, summarize_opportunities
@@ -11,6 +14,7 @@ from qis.dashboard import render_dashboard
 from qis.deepseek_intel import DeepSeekIntelProvider, DeepSeekSettings
 from qis.doctor import run_doctor
 from qis.external_intel import ExternalIntelAnalyzer
+from qis.forecast_learning import apply_strategy_adjustments, hour_bucket
 from qis.macro import MacroAnalyzer
 from qis.models import Mode
 from qis.okx import OkxClient, OkxError
@@ -18,7 +22,138 @@ from qis.portal import render_portal
 from qis.risk import RiskEngine, RiskLimits
 from qis.runner import Runner
 from qis.storage import Storage
+from qis.spot_dashboard import render_spot_dashboard
+from qis.spot_forecast import SpotForecastEngine
 from qis.strategy import DonchianBreakoutStrategy
+from qis.web_server import serve
+
+
+STABLE_BASES = {"USDT", "USDC", "USD", "DAI", "TUSD", "FDUSD", "USDP", "EURT"}
+EQUITY_SYMBOLS = {"AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA"}
+
+
+def _discover_spot_ids(client: OkxClient, settings) -> tuple[str, ...]:
+    configured = list(settings.spot_inst_ids)
+    if settings.spot_auto_discover:
+        instruments = {
+            item.get("instId"): item
+            for item in client.public_instruments("SPOT")
+            if item.get("state") == "live" and item.get("quoteCcy") == "USDT"
+        }
+        tickers = client.public_tickers("SPOT")
+        ranked = []
+        for ticker in tickers:
+            inst_id = ticker.get("instId")
+            instrument = instruments.get(inst_id)
+            if not instrument:
+                continue
+            base = instrument.get("baseCcy", "")
+            if base in STABLE_BASES or base.endswith(("3L", "3S", "5L", "5S")):
+                continue
+            try:
+                volume = float(ticker.get("volCcy24h") or 0)
+            except ValueError:
+                volume = 0.0
+            ranked.append((volume, inst_id))
+        ranked.sort(reverse=True)
+        configured.extend(inst_id for _, inst_id in ranked[: settings.spot_max_assets])
+    configured.extend(settings.stock_inst_ids)
+    return tuple(dict.fromkeys(configured))
+
+
+def _render_spot(settings, output: Path) -> None:
+    client = OkxClient(
+        settings.okx_api_key,
+        settings.okx_api_secret,
+        settings.okx_api_passphrase,
+        settings.okx_simulated,
+    )
+    engine = SpotForecastEngine()
+    storage = Storage(settings.db_path)
+    forecasts = []
+    inst_ids = _discover_spot_ids(client, settings)
+    ticker_map = _ticker_map(client)
+    for inst_id in inst_ids:
+        try:
+            candles = client.public_candles(inst_id, "1D", limit=300)
+        except OkxError as exc:
+            print(f"Skip {inst_id}: {exc}", flush=True)
+            continue
+        ticker = ticker_map.get(inst_id, {})
+        try:
+            live_price = float(ticker.get("last") or 0) or None
+            quote_time = (
+                datetime.fromtimestamp(int(ticker["ts"]) / 1000, tz=timezone.utc)
+                if ticker.get("ts")
+                else None
+            )
+        except (TypeError, ValueError):
+            live_price, quote_time = None, None
+        forecast = engine.analyze(
+            inst_id,
+            candles,
+            live_price=live_price,
+            quote_time=quote_time,
+        )
+        if forecast:
+            forecasts.append(forecast)
+            if not storage.has_forecast_history(inst_id):
+                _backfill_forecast_history(storage, engine, inst_id, candles)
+    if not forecasts:
+        raise RuntimeError("no spot forecasts available")
+    observed_at = max(
+        datetime.fromisoformat(item.quote_time)
+        for item in forecasts
+    )
+    storage.evaluate_due_forecasts(
+        {item.inst_id: item.current_price for item in forecasts},
+        observed_at=observed_at,
+    )
+    adjustments = storage.forecast_strategy_adjustments()
+    predicted_at = hour_bucket(observed_at)
+    for forecast in forecasts:
+        calibrated = apply_strategy_adjustments(asdict(forecast), adjustments)
+        storage.record_forecast_snapshot(calibrated, predicted_at=predicted_at)
+    path = render_spot_dashboard(forecasts, output)
+    print(f"Spot dashboard written to {path.resolve()} ({len(forecasts)} assets)", flush=True)
+
+
+def _ticker_map(client: OkxClient) -> dict[str, dict]:
+    rows: list[dict] = []
+    for inst_type in ("SPOT", "SWAP"):
+        try:
+            rows.extend(client.public_tickers(inst_type))
+        except OkxError as exc:
+            print(f"Ticker refresh degraded for {inst_type}: {exc}", flush=True)
+    return {str(item.get("instId")): item for item in rows if item.get("instId")}
+
+
+def _backfill_forecast_history(
+    storage: Storage,
+    engine: SpotForecastEngine,
+    inst_id: str,
+    candles: list,
+) -> None:
+    closed = candles[:-1] if len(candles) > 1 else candles
+    horizon_days = dict((key, days) for key, _, days in engine.HORIZONS)
+    start = max(90, len(closed) - 210)
+    for origin in range(start, len(closed) - 1, 14):
+        historical = engine.analyze(inst_id, candles[: origin + 2])
+        if historical is None:
+            continue
+        actual_prices = {
+            key: closed[origin + days].close
+            for key, days in horizon_days.items()
+            if origin + days < len(closed)
+        }
+        if not actual_prices:
+            continue
+        predicted_at = closed[origin].ts
+        storage.record_historical_forecast_outcome(
+            asdict(historical),
+            predicted_at,
+            actual_prices,
+        )
 
 
 def main() -> None:
@@ -54,6 +189,14 @@ def main() -> None:
     sub.add_parser("doctor", help="run pre-trade system checks")
     sub.add_parser("pause", help="create pause file and stop trading loop")
     sub.add_parser("resume", help="remove pause file")
+    spot_dashboard = sub.add_parser("spot-dashboard", help="render spot multi-horizon dashboard")
+    spot_dashboard.add_argument("--out", default="data/index.html")
+    spot_watch = sub.add_parser("spot-watch", help="continuously refresh spot dashboard")
+    spot_watch.add_argument("--out", default="data/index.html")
+    spot_watch.add_argument("--interval", type=int, default=900)
+    web_parser = sub.add_parser("web", help="serve dashboard and manual trade API")
+    web_parser.add_argument("--host", default="127.0.0.1")
+    web_parser.add_argument("--port", type=int, default=8787)
     trade_add = sub.add_parser("trade-add", help="record a manually executed trade result")
     trade_add.add_argument("--inst", required=True)
     trade_add.add_argument("--side", choices=["buy", "sell"], required=True)
@@ -100,6 +243,19 @@ def main() -> None:
     if args.command == "portal":
         path = render_portal(Path(args.out))
         print(f"Portal written to {path.resolve()}")
+        return
+    if args.command == "spot-dashboard":
+        _render_spot(settings, Path(args.out))
+        return
+    if args.command == "spot-watch":
+        while True:
+            try:
+                _render_spot(settings, Path(args.out))
+            except Exception as exc:
+                print(f"Spot refresh failed: {exc}", flush=True)
+            time.sleep(max(60, args.interval))
+    if args.command == "web":
+        serve(args.host, args.port, Path("data"), settings.db_path)
         return
     if args.command == "backtest":
         client = OkxClient(settings.okx_api_key, settings.okx_api_secret, settings.okx_api_passphrase, settings.okx_simulated)
