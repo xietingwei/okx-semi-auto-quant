@@ -68,6 +68,13 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
         self.assistant = assistant
         super().__init__(*args, directory=directory, **kwargs)
 
+    def end_headers(self) -> None:
+        if urlparse(self.path).path.endswith((".html", "/")):
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+        super().end_headers()
+
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/":
