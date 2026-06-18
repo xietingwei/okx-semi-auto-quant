@@ -32,7 +32,7 @@ def test_market_analyzer_returns_opportunities() -> None:
     assert opportunities[0].inst_id == "BTC-USDT-SWAP"
     assert opportunities[0].asset_class == "crypto"
     assert 0 <= opportunities[0].success_probability <= 1
-    assert opportunities[0].model == "similarity_bayes_macro_intel_v3"
+    assert opportunities[0].model == "walkforward_calibrated_macro_intel_v4"
 
 
 def test_macro_risk_on_boosts_long_probability() -> None:

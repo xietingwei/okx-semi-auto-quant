@@ -23,7 +23,7 @@ def test_storage_records_manual_trade_stats(tmp_path: Path) -> None:
         size=1.0,
         stop=95.0,
         take_profit=115.0,
-        model="similarity_bayes_macro_intel_v3",
+        model="walkforward_calibrated_macro_intel_v4",
         estimated_probability=0.7,
         notes="test",
     )

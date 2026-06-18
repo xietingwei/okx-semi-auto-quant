@@ -56,7 +56,7 @@ python3 -m qis analyze --top 10 --show-all
 记录你手动执行后的真实交易结果：
 
 ```bash
-python3 -m qis trade-add --inst ETH-USDT-SWAP --side buy --entry 1802 --exit 1820 --size 0.1 --stop 1790 --tp 1829 --prob 0.49 --model similarity_bayes_macro_intel_v3 --notes "manual breakout"
+python3 -m qis trade-add --inst ETH-USDT-SWAP --side buy --entry 1802 --exit 1820 --size 0.1 --stop 1790 --tp 1829 --prob 0.49 --model walkforward_calibrated_macro_intel_v4 --notes "manual breakout"
 ```
 
 查看真实胜率和模型校准误差：
@@ -73,14 +73,27 @@ data/analysis.html
 
 当前机会分析模型：
 
-- `similarity_bayes_macro_intel_v3`
+- `walkforward_calibrated_macro_intel_v4`
 - 特征：突破强度、EMA 趋势差、短周期动量、ATR 波动率、RSI、成交量偏离。
 - 宏观：美股风险偏好、纳指、美元代理、VIX、10 年期收益率。
 - 外部资讯：CoinDesk、Cointelegraph、Decrypt RSS 标题，提取 ETF、监管、黑客、诉讼、资金流、机构采用等事件风险。
-- 概率：用当前形态和历史候选形态做相似度加权，再用贝叶斯先验校准，并用宏观风险环境和外部资讯做方向校准。
+- 验证：历史预测严格按时间前推，只使用预测时点之前的数据，避免未来数据泄漏。
+- 概率：用样本外预测结果做可靠性校准，再用宏观风险环境和外部资讯做小幅方向校准。
+- 模型健康度：输出 Brier 分数、校准误差、前推样本量和漂移状态。
 - 评分：综合成功率、期望 R、样本质量、距离入场区间、趋势环境、宏观环境、外部资讯。
-- 70% 是交易准入门槛，不是收益承诺；达不到门槛时系统应空仓。
+- 准入：默认要求校准概率不低于 70%、前推样本不少于 20、Brier 不高于 0.24、模型状态稳定。
 - 真实概率来自你手动交易后的样本闭环；模型概率只是盘前估计，系统会用 `trade-add` 记录的结果持续校准。
+
+### 算法依据
+
+- 时间序列验证必须保持时间顺序，避免用未来数据训练过去预测：
+  https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html
+- 概率需要用独立于训练数据的预测结果校准，并使用 Brier 等指标评估：
+  https://scikit-learn.org/stable/modules/calibration.html
+- 在线模型可使用 ADWIN 一类方法检测数据分布漂移：
+  https://riverml.xyz/latest/api/drift/ADWIN/
+- 后续金融机器学习验证可参考 MlFinLab 的标签和交叉验证方法：
+  https://github.com/hudson-and-thames/mlfinlab
 
 查看最近记录：
 

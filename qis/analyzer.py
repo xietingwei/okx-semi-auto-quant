@@ -6,6 +6,7 @@ from qis.external_intel import ExternalIntel
 from qis.macro import MacroRegime
 from qis.models import Candle, Side
 from qis.strategy import DonchianBreakoutStrategy
+from qis.validation import similarity_probability
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,11 @@ class Opportunity:
     intel_score: float
     model: str
     feature_quality: float
+    raw_probability: float
+    walk_forward_samples: int
+    brier_score: float | None
+    calibration_error: float | None
+    drift_status: str
     distance_to_entry_pct: float
     reason: str
 
@@ -98,7 +104,8 @@ class MarketAnalyzer:
             take_profit_1 = boundary - risk * 1.5
             take_profit_2 = boundary - risk * 2.2
             distance = max(0.0, (close - boundary) / close)
-        probability, sample, feature_quality = self._similarity_probability(candles, side, boundary, atr)
+        validation, sample, feature_quality = self._validated_probability(candles, side, boundary, atr)
+        probability = validation.calibrated_probability
         macro_delta = self._macro_delta(side)
         intel_delta = self._intel_delta(side)
         probability = self._clip(probability + macro_delta + intel_delta, 0.05, 0.85)
@@ -117,11 +124,16 @@ class MarketAnalyzer:
             + macro_bonus * 8
             + intel_bonus * 7
         ) * reliability
-        model = "similarity_bayes_macro_intel_v3"
+        if validation.drift_status == "drift":
+            score *= 0.35
+        elif validation.drift_status == "warning":
+            score *= 0.75
+        model = "walkforward_calibrated_macro_intel_v4"
         reason = (
             f"{status} {side.value} breakout near {boundary:.4f}; "
             f"ATR={atr:.4f}; regime={regime}; macro={self.macro.label}({self.macro.risk_score:.2f}); "
-            f"intel={self.intel.label}({self.intel.score:.2f}); sample={sample}; quality={feature_quality:.2f}"
+            f"intel={self.intel.label}({self.intel.score:.2f}); sample={sample}; "
+            f"wf={validation.walk_forward_samples}; drift={validation.drift_status}"
         )
         return Opportunity(
             inst_id=inst_id,
@@ -146,16 +158,20 @@ class MarketAnalyzer:
             intel_score=self.intel.score,
             model=model,
             feature_quality=feature_quality,
+            raw_probability=validation.raw_probability,
+            walk_forward_samples=validation.walk_forward_samples,
+            brier_score=validation.brier_score,
+            calibration_error=validation.calibration_error,
+            drift_status=validation.drift_status,
             distance_to_entry_pct=distance,
             reason=reason,
         )
 
-    def _similarity_probability(self, candles: list[Candle], side: Side, boundary: float, atr: float) -> tuple[float, int, float]:
+    def _validated_probability(self, candles: list[Candle], side: Side, boundary: float, atr: float):
         current_features = self._features(candles, side, boundary, atr)
-        weighted_wins = 0.0
-        total_weight = 0.0
         squared_weight = 0.0
-        trials = 0
+        total_weight = 0.0
+        events: list[tuple[tuple[float, ...], bool]] = []
         end = len(candles) - self.max_hold_bars - 1
         for i in range(max(self.lookback + self.atr_period + 2, 40), end):
             history = candles[: i + 1]
@@ -179,18 +195,16 @@ class MarketAnalyzer:
             sample_features = self._features(history, side, boundary_i, atr)
             distance = self._feature_distance(current_features, sample_features)
             weight = math.exp(-distance * 0.85)
-            trials += 1
             total_weight += weight
             squared_weight += weight * weight
-            weighted_wins += weight if outcome else 0.0
-        if trials == 0 or total_weight <= 0:
-            return 0.5, 0, 0.0
+            events.append((sample_features, outcome))
+        if not events or total_weight <= 0:
+            result = similarity_probability(current_features, [], self._feature_weights())
+            return result, 0, 0.0
         effective_n = (total_weight * total_weight / squared_weight) if squared_weight else 0.0
-        prior_mean = 0.48
-        prior_strength = 8.0
-        probability = (weighted_wins + prior_mean * prior_strength) / (total_weight + prior_strength)
         quality = min(1.0, effective_n / 18)
-        return probability, trials, quality
+        result = similarity_probability(current_features, events, self._feature_weights())
+        return result, len(events), quality
 
     def _features(self, candles: list[Candle], side: Side, boundary: float, atr: float) -> tuple[float, ...]:
         latest = candles[-1]
@@ -218,8 +232,12 @@ class MarketAnalyzer:
 
     @staticmethod
     def _feature_distance(left: tuple[float, ...], right: tuple[float, ...]) -> float:
-        weights = (1.4, 1.2, 1.0, 0.7, 0.9, 0.5)
+        weights = MarketAnalyzer._feature_weights()
         return math.sqrt(sum(weight * (a - b) ** 2 for weight, a, b in zip(weights, left, right)))
+
+    @staticmethod
+    def _feature_weights() -> tuple[float, ...]:
+        return (1.4, 1.2, 1.0, 0.7, 0.9, 0.5)
 
     @staticmethod
     def _near_setup(side: Side, close: float, boundary: float, atr: float) -> bool:
@@ -315,7 +333,7 @@ def summarize_opportunities(opportunities: list[Opportunity], limit: int = 10) -
     if not opportunities:
         return "No opportunities found."
     header = (
-        "rank asset inst side status entry_zone stop tp1 tp2 success sample quality expR score regime macro intel model"
+        "rank asset inst side status entry_zone stop tp1 tp2 raw calibrated wf brier drift expR score model"
     )
     lines = [header]
     for idx, item in enumerate(sorted(opportunities, key=lambda row: row.score, reverse=True)[:limit], start=1):
@@ -323,9 +341,9 @@ def summarize_opportunities(opportunities: list[Opportunity], limit: int = 10) -
             f"{idx} {item.asset_class} {item.inst_id} {item.side.value} {item.status} "
             f"{item.entry_low:.4f}-{item.entry_high:.4f} {item.stop:.4f} "
             f"{item.take_profit_1:.4f} {item.take_profit_2:.4f} "
-            f"{item.success_probability * 100:.1f}% {item.sample_size} "
-            f"{item.feature_quality:.2f} {item.expected_r:.2f} {item.score:.1f} "
-            f"{item.regime} {item.macro_label}:{item.macro_score:.2f} "
-            f"{item.intel_label}:{item.intel_score:.2f} {item.model}"
+            f"{item.raw_probability * 100:.1f}% {item.success_probability * 100:.1f}% "
+            f"{item.walk_forward_samples} "
+            f"{item.brier_score if item.brier_score is not None else -1:.3f} "
+            f"{item.drift_status} {item.expected_r:.2f} {item.score:.1f} {item.model}"
         )
     return "\n".join(lines)

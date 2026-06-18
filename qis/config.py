@@ -53,6 +53,8 @@ class Settings:
     ema_fast: int
     ema_slow: int
     min_success_probability: float
+    min_walk_forward_samples: int
+    max_brier_score: float
 
 
 def load_settings() -> Settings:
@@ -101,4 +103,6 @@ def load_settings() -> Settings:
         ema_fast=_int("QIS_EMA_FAST", 0),
         ema_slow=_int("QIS_EMA_SLOW", 0),
         min_success_probability=_float("QIS_MIN_SUCCESS_PROBABILITY", 0.70),
+        min_walk_forward_samples=_int("QIS_MIN_WALK_FORWARD_SAMPLES", 20),
+        max_brier_score=_float("QIS_MAX_BRIER_SCORE", 0.24),
     )

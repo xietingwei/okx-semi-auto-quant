@@ -61,7 +61,7 @@ def main() -> None:
     trade_add.add_argument("--size", type=float, required=True)
     trade_add.add_argument("--stop", type=float)
     trade_add.add_argument("--tp", type=float)
-    trade_add.add_argument("--model", default="similarity_bayes_macro_v2")
+    trade_add.add_argument("--model", default="walkforward_calibrated_macro_intel_v4")
     trade_add.add_argument("--prob", type=float)
     trade_add.add_argument("--notes", default="")
     trade_stats = sub.add_parser("trade-stats", help="show realized manual trading statistics")
@@ -142,7 +142,7 @@ def main() -> None:
         if intel is not None:
             print(f"External intel: {intel.label} score={intel.score:.2f} {intel.reason}")
         storage = Storage(settings.db_path)
-        stats = storage.manual_trade_stats(model="similarity_bayes_macro_intel_v3")
+        stats = storage.manual_trade_stats(model="walkforward_calibrated_macro_intel_v4")
         if stats["trades"]:
             print(
                 "Real calibration "
@@ -166,13 +166,21 @@ def main() -> None:
         qualified = [
             item
             for item in ranked
-            if item.success_probability >= threshold and item.expected_r > 0 and item.feature_quality >= 0.5
+            if item.success_probability >= threshold
+            and item.expected_r > 0
+            and item.feature_quality >= 0.5
+            and item.walk_forward_samples >= settings.min_walk_forward_samples
+            and item.brier_score is not None
+            and item.brier_score <= settings.max_brier_score
+            and item.drift_status == "stable"
         ]
         displayed = ranked if args.show_all else qualified
         if not displayed:
             print(
                 f"No qualified opportunities: min_success={threshold * 100:.1f}%, "
-                "expected_r>0, quality>=0.50. Use --show-all to inspect rejected candidates."
+                f"walk_forward>={settings.min_walk_forward_samples}, "
+                f"brier<={settings.max_brier_score:.2f}, drift=stable. "
+                "Use --show-all to inspect rejected candidates."
             )
         else:
             print(summarize_opportunities(displayed, args.top))
