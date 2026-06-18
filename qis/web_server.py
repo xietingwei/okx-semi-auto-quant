@@ -2,13 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-import io
 import json
 from pathlib import Path
-import tarfile
 import threading
 import time
-import urllib.request
 from urllib.parse import urlparse
 
 from qis.decision_assistant import (
@@ -22,18 +19,6 @@ from qis.okx import OkxClient, OkxError
 from qis.position_risk import analyze_position
 from qis.spot_dashboard import render_spot_dashboard_cache
 from qis.storage import Storage
-
-
-CHAT_UI_PACKAGES = {
-    "nlux-core.js": (
-        "https://registry.npmmirror.com/@nlux/core/-/core-2.17.1.tgz",
-        "package/umd/nlux-core.js",
-    ),
-    "nlux-luna.css": (
-        "https://registry.npmmirror.com/@nlux/themes/-/themes-2.17.1.tgz",
-        "package/luna.css",
-    ),
-}
 
 
 class LiveQuoteService:
@@ -285,7 +270,6 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
 
 def serve(host: str, port: int, data_dir: Path, db_path: Path) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
-    _ensure_chat_ui_assets(data_dir)
     render_spot_dashboard_cache(
         data_dir / "spot_forecasts.json",
         data_dir / "index.html",
@@ -308,32 +292,6 @@ def serve(host: str, port: int, data_dir: Path, db_path: Path) -> None:
     server = ThreadingHTTPServer((host, port), handler)
     print(f"QIS spot web server: http://{host}:{port}", flush=True)
     server.serve_forever()
-
-
-def _ensure_chat_ui_assets(data_dir: Path) -> None:
-    vendor_dir = data_dir / "vendor"
-    vendor_dir.mkdir(parents=True, exist_ok=True)
-    for filename, (url, member_name) in CHAT_UI_PACKAGES.items():
-        path = vendor_dir / filename
-        if path.exists() and path.stat().st_size > 1000:
-            continue
-        try:
-            request = urllib.request.Request(
-                url,
-                headers={"User-Agent": "qis-chat-ui-assets/0.1"},
-            )
-            with urllib.request.urlopen(request, timeout=20) as response:
-                archive = response.read()
-            with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as package:
-                member = package.extractfile(member_name)
-                if member is None:
-                    raise RuntimeError(f"missing package member: {member_name}")
-                content = member.read()
-            if len(content) <= 1000:
-                raise RuntimeError("downloaded asset is unexpectedly small")
-            path.write_bytes(content)
-        except Exception as exc:
-            print(f"NLUX asset unavailable: {filename}: {exc}", flush=True)
 
 
 def _positive(value: object, name: str) -> float:
