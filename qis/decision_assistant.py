@@ -47,6 +47,69 @@ class DecisionAssistant:
         }
 
     def ask(self, question: str, context: dict, history: list[dict] | None = None) -> str:
+        request = self._request(question, context, history, stream=False)
+        try:
+            with urllib.request.urlopen(
+                request, timeout=self.settings.timeout_seconds
+            ) as response:
+                result = json.loads(response.read().decode())
+            answer = str(result["choices"][0]["message"]["content"]).strip()
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            raise DecisionAssistantError("模型返回格式无法识别") from exc
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode(errors="replace")[:300]
+            raise DecisionAssistantError(f"模型接口返回 {exc.code}: {detail}") from exc
+        except Exception as exc:
+            raise DecisionAssistantError(f"模型暂时不可用: {type(exc).__name__}") from exc
+        if not answer:
+            raise DecisionAssistantError("模型未返回有效回答")
+        return answer
+
+    def ask_stream(
+        self,
+        question: str,
+        context: dict,
+        history: list[dict] | None = None,
+    ):
+        request = self._request(question, context, history, stream=True)
+        emitted = False
+        try:
+            with urllib.request.urlopen(
+                request, timeout=self.settings.timeout_seconds
+            ) as response:
+                for raw_line in response:
+                    line = raw_line.decode(errors="replace").strip()
+                    if not line or line.startswith(":") or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(data)
+                        content = event["choices"][0].get("delta", {}).get("content")
+                    except (KeyError, IndexError, TypeError, json.JSONDecodeError):
+                        continue
+                    if content:
+                        emitted = True
+                        yield str(content)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode(errors="replace")[:300]
+            raise DecisionAssistantError(f"模型接口返回 {exc.code}: {detail}") from exc
+        except DecisionAssistantError:
+            raise
+        except Exception as exc:
+            raise DecisionAssistantError(f"模型流式连接失败: {type(exc).__name__}") from exc
+        if not emitted:
+            raise DecisionAssistantError("模型流已结束，但未返回有效文本")
+
+    def _request(
+        self,
+        question: str,
+        context: dict,
+        history: list[dict] | None,
+        *,
+        stream: bool,
+    ) -> urllib.request.Request:
         question = question.strip()
         if not question:
             raise ValueError("请输入需要辅助判断的问题")
@@ -56,7 +119,6 @@ class DecisionAssistant:
             raise DecisionAssistantError(
                 "尚未配置 LLM_API_KEY；数据关系上下文已就绪，配置后即可开始问答"
             )
-
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {
@@ -76,34 +138,19 @@ class DecisionAssistant:
             "messages": messages,
             "temperature": 0.15,
             "max_tokens": 1400,
-            "stream": False,
+            "stream": stream,
         }
-        request = urllib.request.Request(
+        return urllib.request.Request(
             f"{self.settings.base_url.rstrip('/')}/chat/completions",
             data=json.dumps(payload, ensure_ascii=False).encode(),
             headers={
                 "Authorization": f"Bearer {self.settings.api_key}",
                 "Content-Type": "application/json",
+                "Accept": "text/event-stream" if stream else "application/json",
                 "User-Agent": "qis-decision-assistant/0.1",
             },
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(
-                request, timeout=self.settings.timeout_seconds
-            ) as response:
-                result = json.loads(response.read().decode())
-            answer = str(result["choices"][0]["message"]["content"]).strip()
-        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-            raise DecisionAssistantError("模型返回格式无法识别") from exc
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode(errors="replace")[:300]
-            raise DecisionAssistantError(f"模型接口返回 {exc.code}: {detail}") from exc
-        except Exception as exc:
-            raise DecisionAssistantError(f"模型暂时不可用: {type(exc).__name__}") from exc
-        if not answer:
-            raise DecisionAssistantError("模型未返回有效回答")
-        return answer
 
 
 def build_decision_context(

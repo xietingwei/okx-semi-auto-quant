@@ -73,3 +73,37 @@ def test_assistant_calls_openai_compatible_endpoint(monkeypatch) -> None:
     assert captured["url"] == "https://llm.example/v1/chat/completions"
     assert captured["payload"]["model"] == "qis-model"
     assert captured["timeout"] == 9
+
+
+def test_assistant_stream_yields_openai_sse_deltas(monkeypatch) -> None:
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def __iter__(self):
+            return iter(
+                [
+                    'data: {"choices":[{"delta":{"content":"结论"}}]}\n'.encode(),
+                    'data: {"choices":[{"delta":{"content":"：观察"}}]}\n'.encode(),
+                    b"data: [DONE]\n",
+                ]
+            )
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode())
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    assistant = DecisionAssistant(
+        LlmSettings("key", "https://llm.example/v1", "qis-model", "custom")
+    )
+
+    chunks = list(assistant.ask_stream("现在能买吗？", {}))
+
+    assert chunks == ["结论", "：观察"]
+    assert captured["payload"]["stream"] is True

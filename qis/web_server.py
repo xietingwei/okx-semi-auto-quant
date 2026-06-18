@@ -143,7 +143,7 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                     200 if success else 404,
                 )
                 return
-            if path == "/api/assistant/ask":
+            if path in {"/api/assistant/ask", "/api/assistant/stream"}:
                 forecasts = self._live_forecasts()
                 positions = [dict(row) for row in self.storage.spot_positions()]
                 analyses = [
@@ -165,18 +165,23 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                     adjustments=adjustments,
                     advice=advice,
                 )
-                answer = self.assistant.ask(
-                    str(payload.get("question") or ""),
-                    context,
-                    payload.get("history") if isinstance(payload.get("history"), list) else [],
+                history = (
+                    payload.get("history")
+                    if isinstance(payload.get("history"), list)
+                    else []
                 )
-                self._json(
-                    {
-                        "answer": answer,
-                        "references": references,
-                        **self.assistant.status(),
-                    }
-                )
+                question = str(payload.get("question") or "")
+                if path == "/api/assistant/stream":
+                    self._assistant_stream(question, context, history, references)
+                else:
+                    answer = self.assistant.ask(question, context, history)
+                    self._json(
+                        {
+                            "answer": answer,
+                            "references": references,
+                            **self.assistant.status(),
+                        }
+                    )
                 return
             self._json({"ok": False, "error": "not found"}, 404)
         except (KeyError, TypeError, ValueError) as exc:
@@ -198,6 +203,39 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def _assistant_stream(
+        self,
+        question: str,
+        context: dict,
+        history: list[dict],
+        references: list[dict],
+    ) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, no-transform")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        self._stream_event(
+            {
+                "type": "start",
+                "references": references,
+                **self.assistant.status(),
+            }
+        )
+        try:
+            for content in self.assistant.ask_stream(question, context, history):
+                self._stream_event({"type": "delta", "content": content})
+            self._stream_event({"type": "done"})
+        except (ValueError, DecisionAssistantError) as exc:
+            self._stream_event({"type": "error", "error": str(exc)})
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+    def _stream_event(self, payload: dict) -> None:
+        body = (json.dumps(payload, ensure_ascii=False) + "\n").encode()
+        self.wfile.write(body)
+        self.wfile.flush()
 
     def _forecasts(self) -> dict[str, dict]:
         path = Path(self.directory) / "spot_forecasts.json"
