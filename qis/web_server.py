@@ -219,9 +219,10 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
         references: list[dict],
     ) -> None:
         self.send_response(200)
-        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-store, no-transform")
         self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "close")
         self.end_headers()
         self._stream_event(
             {
@@ -230,6 +231,7 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                 **self.assistant.status(),
             }
         )
+        self._stream_event({"type": "padding", "content": " " * 2048})
         try:
             for content in self.assistant.ask_stream(question, context, history):
                 self._stream_event({"type": "delta", "content": content})
