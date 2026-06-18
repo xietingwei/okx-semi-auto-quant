@@ -13,19 +13,23 @@
 
 ```bash
 cp .env.example .env
-python3 -m qis run --paper --once
+bash scripts/start.sh
 ```
 
-持续运行：
+启动后访问：
+
+http://127.0.0.1:8787/data/index.html
+
+查看运行状态：
 
 ```bash
-python3 -m qis run --paper
+bash scripts/status.sh
 ```
 
-扫描多个币种：
+停止全部服务：
 
 ```bash
-python3 -m qis scan --paper
+bash scripts/stop.sh
 ```
 
 默认扫描池现在包含 10 个主流加密货币永续和 7 个 OKX 股票类 USDT 永续：

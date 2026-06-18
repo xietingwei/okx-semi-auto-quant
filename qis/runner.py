@@ -41,7 +41,10 @@ class Runner:
     def run(self, once: bool = False) -> None:
         self.storage.init()
         while True:
-            self.tick()
+            try:
+                self.tick()
+            except Exception as exc:
+                print(f"Tick failed, retrying on next interval: {exc}", flush=True)
             if once:
                 return
             time.sleep(self.settings.loop_seconds)
