@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
+import json
 
 from qis.models import Candle
+from qis.spot_dashboard import render_spot_dashboard_cache
 from qis.spot_forecast import SpotForecastEngine
 
 
@@ -51,3 +53,19 @@ def test_spot_forecast_uses_live_price_without_polluting_closed_history() -> Non
     assert forecast.current_price == 150.0
     assert forecast.quote_time == quote_time.isoformat()
     assert forecast.quote_source == "OKX ticker"
+
+
+def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
+    cache = tmp_path / "spot_forecasts.json"
+    output = tmp_path / "index.html"
+    cache.write_text(
+        json.dumps([{"inst_id": "BTC-USDT"}]),
+        encoding="utf-8",
+    )
+
+    rendered = render_spot_dashboard_cache(cache, output)
+
+    assert rendered == output
+    html = output.read_text(encoding="utf-8")
+    assert "assistantTopButton" in html
+    assert "卖出价格纪律" in html

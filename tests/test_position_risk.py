@@ -44,6 +44,8 @@ def test_position_risk_holds_healthy_position() -> None:
     assert result["action"] in {"hold", "protect"}
     assert result["current_return"] == pytest.approx(0.04)
     assert result["suggested_stop"] > 96.0
+    assert "防守线" in result["sell_advice"] or "有效跌破" in result["sell_advice"]
+    assert result["stop_distance"] < 0
 
 
 def test_position_risk_exits_when_dynamic_stop_breaks() -> None:
@@ -52,3 +54,5 @@ def test_position_risk_exits_when_dynamic_stop_breaks() -> None:
     assert result["action"] == "exit"
     assert result["action_label"] == "止损退出"
     assert result["risk_score"] >= 72
+    assert result["timing_label"] == "立即执行"
+    assert "不要把止损位" in result["sell_advice"]

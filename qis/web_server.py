@@ -17,6 +17,7 @@ from qis.decision_assistant import (
 from qis.forecast_learning import apply_strategy_adjustments
 from qis.okx import OkxClient, OkxError
 from qis.position_risk import analyze_position
+from qis.spot_dashboard import render_spot_dashboard_cache
 from qis.storage import Storage
 
 
@@ -220,6 +221,10 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
 
 def serve(host: str, port: int, data_dir: Path, db_path: Path) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
+    render_spot_dashboard_cache(
+        data_dir / "spot_forecasts.json",
+        data_dir / "index.html",
+    )
     storage = Storage(db_path)
     storage.init()
     quote_service = LiveQuoteService()

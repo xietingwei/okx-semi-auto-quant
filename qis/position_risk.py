@@ -92,6 +92,33 @@ def analyze_position(position: Mapping[str, Any], forecast: Mapping[str, Any], n
     if not reasons:
         reasons.append("趋势、概率与波动风险仍在可接受范围")
 
+    stop_distance = suggested_stop / current - 1
+    target_distance = target / current - 1
+    if action == "exit":
+        timing_label = "立即执行"
+        sell_advice = (
+            f"当前价已满足退出条件，建议按市价或可成交限价卖出；"
+            f"不要把止损位 {suggested_stop:.6g} 继续下移。"
+        )
+    elif action == "reduce":
+        timing_label = "本轮反弹 / 当前价分批执行"
+        sell_advice = (
+            f"建议先卖出 30%–50%；剩余仓位保护价上移至 {suggested_stop:.6g}，"
+            f"接近目标价 {target:.6g} 时继续止盈。"
+        )
+    elif action == "protect":
+        timing_label = "等待价格触发"
+        sell_advice = (
+            f"暂不追价卖出；若收盘或有效跌破 {suggested_stop:.6g} 则退出，"
+            f"若上涨至 {target:.6g} 附近则分批止盈。"
+        )
+    else:
+        timing_label = "继续观察"
+        sell_advice = (
+            f"当前无需卖出；将 {suggested_stop:.6g} 作为防守线，"
+            f"到达 {target:.6g} 附近或上涨概率明显转弱时重新评估。"
+        )
+
     return {
         "position_id": int(position["id"]),
         "action": action,
@@ -103,6 +130,10 @@ def analyze_position(position: Mapping[str, Any], forecast: Mapping[str, Any], n
         "unrealized_pnl": (current - entry) * quantity,
         "suggested_stop": suggested_stop,
         "target_price": target,
+        "stop_distance": stop_distance,
+        "target_distance": target_distance,
+        "timing_label": timing_label,
+        "sell_advice": sell_advice,
         "up_probability": up_probability,
         "held_days": held_days,
         "horizon_days": horizon_days,
