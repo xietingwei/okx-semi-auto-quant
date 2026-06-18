@@ -8,6 +8,7 @@ from qis.analyzer import MarketAnalyzer, summarize_opportunities
 from qis.backtest import Backtester
 from qis.config import load_settings
 from qis.dashboard import render_dashboard
+from qis.deepseek_intel import DeepSeekIntelProvider, DeepSeekSettings
 from qis.doctor import run_doctor
 from qis.external_intel import ExternalIntelAnalyzer
 from qis.macro import MacroAnalyzer
@@ -140,7 +141,20 @@ def main() -> None:
             print(f"Macro regime: {macro.label} score={macro.risk_score:.2f} {macro.reason}")
         intel = None if args.no_intel else ExternalIntelAnalyzer().analyze()
         if intel is not None:
+            if settings.deepseek_api_key:
+                provider = DeepSeekIntelProvider(
+                    DeepSeekSettings(
+                        api_key=settings.deepseek_api_key,
+                        base_url=settings.deepseek_base_url,
+                        model=settings.deepseek_model,
+                        timeout_seconds=settings.deepseek_timeout_seconds,
+                        cache_ttl_seconds=settings.deepseek_cache_ttl_seconds,
+                    )
+                )
+                all_inst_ids = tuple(dict.fromkeys(settings.inst_ids + settings.stock_inst_ids))
+                intel = provider.enrich(intel, all_inst_ids)
             print(f"External intel: {intel.label} score={intel.score:.2f} {intel.reason}")
+            print(f"Intel provider: {intel.provider}; summary={intel.research_summary or 'n/a'}")
         storage = Storage(settings.db_path)
         stats = storage.manual_trade_stats(model="walkforward_calibrated_macro_intel_v4")
         if stats["trades"]:

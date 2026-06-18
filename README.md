@@ -88,6 +88,29 @@ data/analysis.html
 - 准入：默认要求校准概率不低于 70%、前推样本不少于 20、Brier 不高于 0.24、模型状态稳定。
 - 真实概率来自你手动交易后的样本闭环；模型概率只是盘前估计，系统会用 `trade-add` 记录的结果持续校准。
 
+### DeepSeek V4 资讯研究员
+
+在 `.env` 中配置：
+
+```ini
+DEEPSEEK_API_KEY=你的_API_Key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_TIMEOUT_SECONDS=45
+DEEPSEEK_CACHE_TTL_SECONDS=1800
+```
+
+说明：
+
+- 默认使用 `deepseek-v4-flash`，可切换为 `deepseek-v4-pro`。
+- DeepSeek 只负责将新闻标题转换为结构化事件因子，不允许直接下单或绕过风控。
+- 输出包含影响资产、方向、影响强度、置信度、有效期和理由。
+- 新闻标题被视为不可信数据，提示词明确禁止执行标题中的指令。
+- API 输出经过 JSON、资产白名单和数值范围校验。
+- 结果按模型、标题和资产池指纹缓存 30 分钟，降低费用。
+- 未配置 Key 或接口失败时自动降级到关键词资讯模型。
+- API Key 只保存在 `.env`，该文件已被 `.gitignore` 排除。
+
 ### 算法依据
 
 - 时间序列验证必须保持时间顺序，避免用未来数据训练过去预测：

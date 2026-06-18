@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from qis.analyzer import MarketAnalyzer
+from qis.external_intel import ExternalIntel
 from qis.macro import MacroRegime
 from qis.models import Candle
 
@@ -48,3 +49,22 @@ def test_market_analyzer_marks_stock_assets() -> None:
     opportunities = MarketAnalyzer().analyze("NVDA-USDT-SWAP", _candles())
 
     assert opportunities[0].asset_class == "stock"
+
+
+def test_asset_specific_intel_changes_probability() -> None:
+    bullish = ExternalIntel(
+        "constructive",
+        0.0,
+        [],
+        "test",
+        "now",
+        asset_scores={"BTC": 0.8, "NVDA": -0.8},
+        provider="deepseek-v4-flash",
+    )
+    analyzer = MarketAnalyzer(intel=bullish)
+    btc = analyzer.analyze("BTC-USDT-SWAP", _candles())
+    nvda = analyzer.analyze("NVDA-USDT-SWAP", _candles())
+    btc_long = next(item for item in btc if item.side.value == "buy")
+    nvda_long = next(item for item in nvda if item.side.value == "buy")
+
+    assert btc_long.success_probability > nvda_long.success_probability

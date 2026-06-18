@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 import html
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -21,6 +22,10 @@ class ExternalIntel:
     headlines: list[Headline]
     reason: str
     fetched_at: str
+    asset_scores: dict[str, float] = field(default_factory=dict)
+    research_summary: str = ""
+    events: list[dict] = field(default_factory=list)
+    provider: str = "keyword"
 
 
 class ExternalIntelAnalyzer:
@@ -28,6 +33,10 @@ class ExternalIntelAnalyzer:
         "CoinDesk": "https://www.coindesk.com/arc/outboundfeeds/rss/",
         "Cointelegraph": "https://cointelegraph.com/rss",
         "Decrypt": "https://decrypt.co/feed",
+        "Federal Reserve": "https://www.federalreserve.gov/feeds/press_all.xml",
+        "SEC": "https://www.sec.gov/news/pressreleases.rss",
+        "CNBC Technology": "https://www.cnbc.com/id/19854910/device/rss/rss.html",
+        "CNBC Earnings": "https://www.cnbc.com/id/15839135/device/rss/rss.html",
     }
     POSITIVE = (
         "etf inflow",
@@ -57,10 +66,16 @@ class ExternalIntelAnalyzer:
         "fraud",
     )
 
-    def analyze(self, limit_per_feed: int = 8) -> ExternalIntel:
+    def analyze(self, limit_per_feed: int = 6) -> ExternalIntel:
         headlines: list[Headline] = []
-        for source, url in self.FEEDS.items():
-            headlines.extend(self._fetch_feed(source, url, limit_per_feed))
+        feed_items = list(self.FEEDS.items())
+        with ThreadPoolExecutor(max_workers=min(6, len(feed_items))) as executor:
+            results = executor.map(
+                lambda item: self._fetch_feed(item[0], item[1], limit_per_feed),
+                feed_items,
+            )
+            for items in results:
+                headlines.extend(items)
         score = self._score(headlines)
         if score >= 0.18:
             label = "constructive"

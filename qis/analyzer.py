@@ -107,7 +107,8 @@ class MarketAnalyzer:
         validation, sample, feature_quality = self._validated_probability(candles, side, boundary, atr)
         probability = validation.calibrated_probability
         macro_delta = self._macro_delta(side)
-        intel_delta = self._intel_delta(side)
+        intel_score = self._asset_intel_score(inst_id)
+        intel_delta = self._intel_delta(side, intel_score)
         probability = self._clip(probability + macro_delta + intel_delta, 0.05, 0.85)
         risk_reward = 2.2
         expected_r = probability * risk_reward - (1 - probability)
@@ -115,7 +116,7 @@ class MarketAnalyzer:
         proximity = max(0.0, 1 - distance / 0.015)
         regime_bonus = self._regime_bonus(side, regime)
         macro_bonus = self._macro_bonus(side)
-        intel_bonus = self._intel_bonus(side)
+        intel_bonus = self._intel_bonus(side, intel_score)
         score = (
             expected_r * 45
             + probability * 35
@@ -132,7 +133,7 @@ class MarketAnalyzer:
         reason = (
             f"{status} {side.value} breakout near {boundary:.4f}; "
             f"ATR={atr:.4f}; regime={regime}; macro={self.macro.label}({self.macro.risk_score:.2f}); "
-            f"intel={self.intel.label}({self.intel.score:.2f}); sample={sample}; "
+            f"intel={self.intel.provider}({intel_score:.2f}); sample={sample}; "
             f"wf={validation.walk_forward_samples}; drift={validation.drift_status}"
         )
         return Opportunity(
@@ -154,8 +155,8 @@ class MarketAnalyzer:
             regime=regime,
             macro_label=self.macro.label,
             macro_score=self.macro.risk_score,
-            intel_label=self.intel.label,
-            intel_score=self.intel.score,
+            intel_label=self.intel.provider,
+            intel_score=intel_score,
             model=model,
             feature_quality=feature_quality,
             raw_probability=validation.raw_probability,
@@ -320,12 +321,22 @@ class MarketAnalyzer:
             return "stock"
         return "crypto"
 
-    def _intel_delta(self, side: Side) -> float:
-        directional = self.intel.score if side is Side.BUY else -self.intel.score
+    def _asset_intel_score(self, inst_id: str) -> float:
+        symbol = inst_id.split("-")[0]
+        market_score = self.intel.asset_scores.get("MARKET", self.intel.score)
+        asset_score = self.intel.asset_scores.get(symbol)
+        if asset_score is None:
+            return market_score
+        return self._clip(asset_score * 0.75 + market_score * 0.25, -1.0, 1.0)
+
+    @staticmethod
+    def _intel_delta(side: Side, intel_score: float) -> float:
+        directional = intel_score if side is Side.BUY else -intel_score
         return max(-0.06, min(0.06, directional * 0.08))
 
-    def _intel_bonus(self, side: Side) -> float:
-        directional = self.intel.score if side is Side.BUY else -self.intel.score
+    @staticmethod
+    def _intel_bonus(side: Side, intel_score: float) -> float:
+        directional = intel_score if side is Side.BUY else -intel_score
         return max(-1.0, min(1.0, directional))
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from qis.config import Settings
+from qis.deepseek_intel import DeepSeekIntelProvider, DeepSeekSettings
 from qis.okx import OkxClient
 from qis.storage import Storage
 
@@ -41,6 +42,20 @@ def run_doctor(settings: Settings) -> list[Check]:
             checks.append(Check("okx_private_account", False, str(exc)))
     else:
         checks.append(Check("okx_private_account", settings.mode.value == "paper", "credentials not configured"))
+    if settings.deepseek_api_key:
+        provider = DeepSeekIntelProvider(
+            DeepSeekSettings(
+                api_key=settings.deepseek_api_key,
+                base_url=settings.deepseek_base_url,
+                model=settings.deepseek_model,
+                timeout_seconds=settings.deepseek_timeout_seconds,
+                cache_ttl_seconds=settings.deepseek_cache_ttl_seconds,
+            )
+        )
+        ok, detail = provider.check_model()
+        checks.append(Check("deepseek_intel", ok, detail))
+    else:
+        checks.append(Check("deepseek_intel", True, "disabled; configure DEEPSEEK_API_KEY to enable"))
     return checks
 
 

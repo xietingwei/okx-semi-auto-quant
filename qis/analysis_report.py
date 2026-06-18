@@ -40,12 +40,18 @@ def _html(
         else "暂无合格机会"
     )
     macro_text = "macro disabled" if macro is None else f"{macro.label} score={macro.risk_score:.2f}; {macro.reason}"
-    intel_text = "intel disabled" if intel is None else f"{intel.label} score={intel.score:.2f}; {intel.reason}"
+    intel_text = (
+        "资讯关闭"
+        if intel is None
+        else f"{intel.provider} / {intel.label} / 全局 {intel.score:.2f}"
+    )
     calibration_text = _calibration_text(calibration)
     headline_rows = "\n".join(
         f"<li>{html.escape(item.source)}: <a href=\"{html.escape(item.link)}\">{html.escape(item.title)}</a></li>"
         for item in (intel.headlines[:8] if intel else [])
     )
+    event_rows = "\n".join(_event_row(event) for event in (intel.events[:12] if intel else []))
+    research_summary = intel.research_summary if intel and intel.research_summary else "暂无 DeepSeek 研究摘要"
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -130,6 +136,19 @@ def _html(
       <div class="metric"><div class="label">实盘校准</div><div class="value" style="font-size:14px">{html.escape(calibration_text)}</div></div>
     </section>
     <section class="metric" style="margin-bottom:18px">
+      <div class="label">AI 资讯研究摘要</div>
+      <div style="margin-top:8px; line-height:1.65">{html.escape(research_summary)}</div>
+    </section>
+    <section class="metric" style="margin-bottom:18px">
+      <div class="label">结构化事件因子</div>
+      <div class="table-wrap" style="margin-top:10px; max-height:260px">
+        <table>
+          <thead><tr><th>资产</th><th>事件类型</th><th>方向</th><th>影响</th><th>置信度</th><th>有效期</th><th>依据</th></tr></thead>
+          <tbody>{event_rows or '<tr><td colspan="7">暂无结构化事件；当前使用关键词资讯模型。</td></tr>'}</tbody>
+        </table>
+      </div>
+    </section>
+    <section class="metric" style="margin-bottom:18px">
       <div class="label">参考资讯标题</div>
       <ul style="margin:10px 0 0; padding-left:18px; color:var(--muted); line-height:1.5">{headline_rows}</ul>
     </section>
@@ -181,6 +200,21 @@ def _calibration_text(calibration: dict[str, float | int | None] | None) -> str:
     trades = calibration.get("trades")
     profit_factor = calibration.get("profit_factor")
     return f"{trades} 笔；真实胜率 {float(win_rate) * 100:.1f}%；平均R {float(avg_r):.2f}；盈亏因子 {float(profit_factor):.2f}"
+
+
+def _event_row(event: dict) -> str:
+    direction = int(event.get("direction", 0))
+    direction_text = "利多" if direction > 0 else "利空" if direction < 0 else "中性"
+    return f"""
+        <tr>
+          <td>{html.escape(str(event.get("asset", "MARKET")))}</td>
+          <td>{html.escape(str(event.get("event_type", "other")))}</td>
+          <td>{direction_text}</td>
+          <td>{float(event.get("impact", 0)):.2f}</td>
+          <td>{float(event.get("confidence", 0)):.2f}</td>
+          <td>{int(event.get("horizon_hours", 0))} 小时</td>
+          <td class="reason">{html.escape(str(event.get("rationale", "")))}</td>
+        </tr>"""
 
 
 def _row(index: int, item: Opportunity) -> str:

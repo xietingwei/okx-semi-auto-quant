@@ -55,6 +55,11 @@ class Settings:
     min_success_probability: float
     min_walk_forward_samples: int
     max_brier_score: float
+    deepseek_api_key: str
+    deepseek_base_url: str
+    deepseek_model: str
+    deepseek_timeout_seconds: int
+    deepseek_cache_ttl_seconds: int
 
 
 def load_settings() -> Settings:
@@ -105,4 +110,9 @@ def load_settings() -> Settings:
         min_success_probability=_float("QIS_MIN_SUCCESS_PROBABILITY", 0.70),
         min_walk_forward_samples=_int("QIS_MIN_WALK_FORWARD_SAMPLES", 20),
         max_brier_score=_float("QIS_MAX_BRIER_SCORE", 0.24),
+        deepseek_api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
+        deepseek_base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        deepseek_model=os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+        deepseek_timeout_seconds=_int("DEEPSEEK_TIMEOUT_SECONDS", 45),
+        deepseek_cache_ttl_seconds=_int("DEEPSEEK_CACHE_TTL_SECONDS", 1800),
     )
