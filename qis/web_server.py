@@ -242,7 +242,9 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
             return
 
     def _stream_event(self, payload: dict) -> None:
-        body = (json.dumps(payload, ensure_ascii=False) + "\n").encode()
+        body = (
+            "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
+        ).encode()
         self.wfile.write(body)
         self.wfile.flush()
 
