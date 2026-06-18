@@ -53,6 +53,9 @@ def test_spot_forecast_uses_live_price_without_polluting_closed_history() -> Non
     assert forecast.current_price == 150.0
     assert forecast.quote_time == quote_time.isoformat()
     assert forecast.quote_source == "OKX ticker"
+    assert {"open", "high", "low", "close", "volume"} <= set(
+        forecast.history[-1]
+    )
 
 
 def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
@@ -72,3 +75,6 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert ".message.ai{" in html
     assert "role==='assistant'?'ai':role" in html
     assert ".message.assistant{" not in html
+    assert 'data-frame="1H"' in html
+    assert 'data-scope="global"' in html
+    assert "/api/assistant/stream" in html

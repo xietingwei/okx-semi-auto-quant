@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -89,6 +90,17 @@ CREATE TABLE IF NOT EXISTS spot_forecast_evaluations (
     actual_return REAL,
     evaluated_at TEXT,
     UNIQUE(inst_id, horizon, predicted_at)
+);
+
+CREATE TABLE IF NOT EXISTS forecast_learning_runs (
+    run_at TEXT PRIMARY KEY,
+    evaluated_count INTEGER NOT NULL,
+    total_samples INTEGER NOT NULL,
+    pending_samples INTEGER NOT NULL,
+    active_horizons INTEGER NOT NULL,
+    direction_accuracy REAL,
+    adjustments_json TEXT NOT NULL,
+    advice_json TEXT NOT NULL
 );
 """
 
@@ -662,6 +674,62 @@ class Storage:
                 "coverage": coverage,
             }
         return result
+
+    def record_forecast_learning_run(
+        self,
+        run_at: datetime,
+        evaluated_count: int,
+        evaluation: dict,
+        adjustments: dict,
+        advice: list[dict],
+    ) -> None:
+        self.init()
+        overall = evaluation.get("overall", {})
+        active_horizons = sum(
+            1 for item in adjustments.values() if item.get("active")
+        )
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO forecast_learning_runs
+                (run_at, evaluated_count, total_samples, pending_samples,
+                 active_horizons, direction_accuracy, adjustments_json, advice_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_at.isoformat(),
+                    int(evaluated_count),
+                    int(overall.get("samples") or 0),
+                    int(overall.get("pending") or 0),
+                    active_horizons,
+                    overall.get("direction_accuracy"),
+                    json.dumps(adjustments, ensure_ascii=False),
+                    json.dumps(advice, ensure_ascii=False),
+                ),
+            )
+
+    def latest_forecast_learning_run(self) -> dict | None:
+        self.init()
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT * FROM forecast_learning_runs
+                ORDER BY run_at DESC LIMIT 1
+                """
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "run_at": row["run_at"],
+            "evaluated_count": int(row["evaluated_count"]),
+            "total_samples": int(row["total_samples"]),
+            "pending_samples": int(row["pending_samples"]),
+            "active_horizons": int(row["active_horizons"]),
+            "direction_accuracy": row["direction_accuracy"],
+            "adjustments": json.loads(row["adjustments_json"]),
+            "advice": json.loads(row["advice_json"]),
+        }
 
     # Backwards-compatible alias for callers that still display trade-result statistics.
     def spot_reliability(self) -> dict:

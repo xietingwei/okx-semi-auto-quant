@@ -114,3 +114,35 @@ def test_hourly_forecast_snapshot_is_deduplicated(tmp_path: Path) -> None:
 
     evaluation = storage.forecast_evaluation()
     assert evaluation["overall"]["pending"] == 1
+
+
+def test_forecast_learning_run_is_auditable(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "qis.sqlite3")
+    run_at = datetime(2026, 6, 18, 8, tzinfo=timezone.utc)
+    evaluation = {
+        "overall": {
+            "samples": 120,
+            "pending": 15,
+            "direction_accuracy": 0.61,
+        }
+    }
+    adjustments = {
+        "1d": {"active": True, "samples": 50},
+        "1w": {"active": False, "samples": 20},
+    }
+    advice = [{"level": "bias", "title": "修正偏差", "detail": "测试"}]
+
+    storage.record_forecast_learning_run(
+        run_at,
+        7,
+        evaluation,
+        adjustments,
+        advice,
+    )
+
+    latest = storage.latest_forecast_learning_run()
+    assert latest is not None
+    assert latest["evaluated_count"] == 7
+    assert latest["total_samples"] == 120
+    assert latest["active_horizons"] == 1
+    assert latest["adjustments"]["1d"]["active"] is True

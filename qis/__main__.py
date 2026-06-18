@@ -105,15 +105,24 @@ def _render_spot(settings, output: Path) -> None:
         datetime.fromisoformat(item.quote_time)
         for item in forecasts
     )
-    storage.evaluate_due_forecasts(
+    evaluated_count = storage.evaluate_due_forecasts(
         {item.inst_id: item.current_price for item in forecasts},
         observed_at=observed_at,
     )
     adjustments = storage.forecast_strategy_adjustments()
+    evaluation = storage.forecast_evaluation()
+    advice = storage.forecast_advice()
     predicted_at = hour_bucket(observed_at)
     for forecast in forecasts:
         calibrated = apply_strategy_adjustments(asdict(forecast), adjustments)
         storage.record_forecast_snapshot(calibrated, predicted_at=predicted_at)
+    storage.record_forecast_learning_run(
+        predicted_at,
+        evaluated_count,
+        evaluation,
+        adjustments,
+        advice,
+    )
     path = render_spot_dashboard(forecasts, output)
     print(f"Spot dashboard written to {path.resolve()} ({len(forecasts)} assets)", flush=True)
 

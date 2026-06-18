@@ -163,9 +163,12 @@ def build_decision_context(
     evaluation: dict,
     adjustments: dict,
     advice: list[dict],
+    analysis_scope: str = "asset",
+    learning_run: dict | None = None,
 ) -> tuple[dict, list[dict]]:
-    selected = forecasts.get(selected_inst_id or "")
-    if selected is None and forecasts:
+    global_scope = analysis_scope == "global"
+    selected = None if global_scope else forecasts.get(selected_inst_id or "")
+    if selected is None and forecasts and not global_scope:
         selected = next(iter(forecasts.values()))
     horizon_rows = selected.get("forecasts", []) if selected else []
     horizon = None
@@ -185,12 +188,15 @@ def build_decision_context(
     ]
     context = {
         "scope": "辅助决策，不构成投资建议，不允许自动下单",
+        "analysis_scope": "全局市场" if global_scope else "当前标的",
         "selected_asset": _compact_forecast(selected, horizon),
+        "market_overview": _market_overview(forecasts),
         "open_positions": open_positions[:20],
         "position_risk_analyses": open_analyses[:20],
         "model_evaluation": evaluation,
         "strategy_adjustments": adjustments,
         "model_advice": advice[:10],
+        "latest_learning_run": learning_run,
         "relationship_notes": [
             "标的预测经过 strategy_adjustments 校准后再展示",
             "持仓风险分析关联买入记录与该标的最新预测",
@@ -198,6 +204,10 @@ def build_decision_context(
         ],
     }
     references = []
+    if global_scope:
+        references.append(
+            {"type": "market", "label": f"{len(forecasts)} 个市场标的"}
+        )
     if selected:
         references.append(
             {
@@ -212,6 +222,59 @@ def build_decision_context(
     active = sum(1 for item in adjustments.values() if item.get("active"))
     references.append({"type": "strategy", "label": f"{active} 个周期自动校准"})
     return context, references
+
+
+def _market_overview(forecasts: dict[str, dict]) -> dict:
+    rows = list(forecasts.values())
+
+    def month(item: dict) -> dict:
+        return next(
+            (
+                value
+                for value in item.get("forecasts", [])
+                if value.get("key") == "1m"
+            ),
+            {},
+        )
+
+    ranked = sorted(
+        rows,
+        key=lambda item: (
+            float(month(item).get("up_probability") or 0),
+            float(month(item).get("expected_return") or 0),
+        ),
+        reverse=True,
+    )
+    weakest = sorted(
+        rows,
+        key=lambda item: float(month(item).get("up_probability") or 0),
+    )
+
+    def compact(item: dict) -> dict:
+        selected = month(item)
+        return {
+            "inst_id": item.get("inst_id"),
+            "market_type": item.get("market_type"),
+            "current_price": item.get("current_price"),
+            "daily_change": item.get("daily_change"),
+            "regime": item.get("regime"),
+            "decision": item.get("decision"),
+            "one_month_return": selected.get("expected_return"),
+            "one_month_up_probability": selected.get("up_probability"),
+            "one_month_confidence": selected.get("confidence"),
+        }
+
+    return {
+        "asset_count": len(rows),
+        "bullish_count": sum(
+            1 for item in rows if "买入" in str(item.get("decision", ""))
+        ),
+        "defensive_count": sum(
+            1 for item in rows if "企稳" in str(item.get("decision", ""))
+        ),
+        "top_opportunities": [compact(item) for item in ranked[:8]],
+        "weakest_assets": [compact(item) for item in weakest[:5]],
+    }
 
 
 def _compact_forecast(selected: dict | None, horizon: dict | None) -> dict | None:

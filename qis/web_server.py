@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import threading
 import time
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from qis.decision_assistant import (
     DecisionAssistant,
@@ -14,7 +14,7 @@ from qis.decision_assistant import (
     LlmSettings,
     build_decision_context,
 )
-from qis.forecast_learning import apply_strategy_adjustments
+from qis.forecast_learning import apply_strategy_adjustments, hour_bucket
 from qis.okx import OkxClient, OkxError
 from qis.position_risk import analyze_position
 from qis.spot_dashboard import render_spot_dashboard_cache
@@ -98,12 +98,50 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                     "model_evaluation": self.storage.forecast_evaluation(),
                     "strategy_adjustments": self.storage.forecast_strategy_adjustments(),
                     "advice": self.storage.forecast_advice(),
+                    "learning_run": self.storage.latest_forecast_learning_run(),
                 }
             )
             return
         if path == "/api/spot/quotes":
             forecasts = self._live_forecasts()
             self._json({"forecasts": list(forecasts.values())})
+            return
+        if path == "/api/spot/candles":
+            query = parse_qs(urlparse(self.path).query)
+            inst_id = str((query.get("inst_id") or [""])[0])
+            bar = str((query.get("bar") or ["1H"])[0]).upper()
+            if inst_id not in self._forecasts():
+                self._json({"ok": False, "error": "unknown instrument"}, 404)
+                return
+            if bar not in {"1H", "1D"}:
+                self._json({"ok": False, "error": "unsupported candle interval"}, 400)
+                return
+            try:
+                candles = OkxClient().public_candles(
+                    inst_id,
+                    bar,
+                    limit=168 if bar == "1H" else 120,
+                )
+            except OkxError as exc:
+                self._json({"ok": False, "error": str(exc)}, 503)
+                return
+            self._json(
+                {
+                    "inst_id": inst_id,
+                    "bar": bar,
+                    "candles": [
+                        {
+                            "date": item.ts.isoformat(),
+                            "open": item.open,
+                            "high": item.high,
+                            "low": item.low,
+                            "close": item.close,
+                            "volume": item.volume,
+                        }
+                        for item in candles
+                    ],
+                }
+            )
             return
         if path == "/api/health":
             self._json(
@@ -162,6 +200,7 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                 evaluation = self.storage.forecast_evaluation()
                 adjustments = self.storage.forecast_strategy_adjustments()
                 advice = self.storage.forecast_advice()
+                learning_run = self.storage.latest_forecast_learning_run()
                 context, references = build_decision_context(
                     forecasts=forecasts,
                     selected_inst_id=str(payload.get("inst_id") or ""),
@@ -171,6 +210,8 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                     evaluation=evaluation,
                     adjustments=adjustments,
                     advice=advice,
+                    analysis_scope=str(payload.get("scope") or "asset"),
+                    learning_run=learning_run,
                 )
                 history = (
                     payload.get("history")
@@ -276,6 +317,16 @@ def serve(host: str, port: int, data_dir: Path, db_path: Path) -> None:
     )
     storage = Storage(db_path)
     storage.init()
+    if storage.latest_forecast_learning_run() is None:
+        evaluation = storage.forecast_evaluation()
+        adjustments = storage.forecast_strategy_adjustments()
+        storage.record_forecast_learning_run(
+            hour_bucket(),
+            0,
+            evaluation,
+            adjustments,
+            storage.forecast_advice(),
+        )
     quote_service = LiveQuoteService()
     assistant = DecisionAssistant(LlmSettings.from_env())
 

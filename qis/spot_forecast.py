@@ -103,7 +103,14 @@ class SpotForecastEngine:
         else:
             decision = "中性观察"
         history = [
-            {"date": item.ts.date().isoformat(), "close": item.close}
+            {
+                "date": item.ts.isoformat(),
+                "open": item.open,
+                "high": item.high,
+                "low": item.low,
+                "close": item.close,
+                "volume": item.volume,
+            }
             for item in closed[-120:]
         ]
         factors = {

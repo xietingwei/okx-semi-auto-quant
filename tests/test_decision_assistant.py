@@ -32,6 +32,48 @@ def test_build_context_links_forecast_position_and_strategy() -> None:
     assert any(item["type"] == "strategy" for item in references)
 
 
+def test_global_context_ranks_market_without_selected_asset() -> None:
+    forecasts = {
+        "BTC-USDT": {
+            "inst_id": "BTC-USDT",
+            "decision": "分批关注买入",
+            "forecasts": [{
+                "key": "1m",
+                "up_probability": 0.72,
+                "expected_return": 0.12,
+                "confidence": 0.7,
+            }],
+        },
+        "ETH-USDT": {
+            "inst_id": "ETH-USDT",
+            "decision": "等待趋势企稳",
+            "forecasts": [{
+                "key": "1m",
+                "up_probability": 0.38,
+                "expected_return": -0.04,
+                "confidence": 0.6,
+            }],
+        },
+    }
+
+    context, references = build_decision_context(
+        forecasts=forecasts,
+        selected_inst_id="BTC-USDT",
+        selected_horizon="1m",
+        positions=[],
+        analyses=[],
+        evaluation={"overall": {}},
+        adjustments={},
+        advice=[],
+        analysis_scope="global",
+    )
+
+    assert context["selected_asset"] is None
+    assert context["market_overview"]["asset_count"] == 2
+    assert context["market_overview"]["top_opportunities"][0]["inst_id"] == "BTC-USDT"
+    assert any(item["type"] == "market" for item in references)
+
+
 def test_assistant_requires_api_key() -> None:
     assistant = DecisionAssistant(
         LlmSettings("", "https://example.com", "model", "test")
