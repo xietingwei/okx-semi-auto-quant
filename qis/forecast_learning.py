@@ -17,14 +17,26 @@ def apply_strategy_adjustments(forecast: dict, adjustments: dict[str, dict]) -> 
     current = float(result["current_price"])
     for item in result["forecasts"]:
         adjustment = adjustments.get(str(item["key"]), {})
-        if not adjustment.get("active"):
-            item["learning"] = {"active": False, "samples": int(adjustment.get("samples", 0))}
-            continue
+        learning_active = bool(adjustment.get("active"))
+        if not learning_active:
+            adjustment = {
+                "samples": int(adjustment.get("samples", 0)),
+                "return_shift": 0.0,
+                "return_scale": 0.65,
+                "probability_shift": 0.0,
+                "probability_scale": 0.60,
+                "interval_scale": 1.15,
+                "calibration_method": "cold_start_conservative_prior",
+            }
 
         raw_return = float(item["expected_return"])
         corrected_return = raw_return * float(adjustment["return_scale"]) + float(
             adjustment["return_shift"]
         )
+        if raw_return > 0:
+            corrected_return = max(0.0, corrected_return)
+        elif raw_return < 0:
+            corrected_return = min(0.0, corrected_return)
         corrected_return = _clip(corrected_return, -0.35, 0.45)
 
         raw_probability = float(item["up_probability"])
@@ -32,6 +44,10 @@ def apply_strategy_adjustments(forecast: dict, adjustments: dict[str, dict]) -> 
             adjustment["probability_scale"]
         )
         corrected_probability += float(adjustment["probability_shift"])
+        if raw_probability > 0.5:
+            corrected_probability = max(0.5, corrected_probability)
+        elif raw_probability < 0.5:
+            corrected_probability = min(0.5, corrected_probability)
         corrected_probability = _clip(corrected_probability, 0.12, 0.88)
 
         old_target = float(item["target"])
@@ -50,7 +66,7 @@ def apply_strategy_adjustments(forecast: dict, adjustments: dict[str, dict]) -> 
         item["high"] = new_target + new_half_width
         item["signal"] = _signal(corrected_return, corrected_probability)
         item["learning"] = {
-            "active": True,
+            "active": learning_active,
             "samples": int(adjustment["samples"]),
             "return_shift": float(adjustment["return_shift"]),
             "return_scale": float(adjustment["return_scale"]),

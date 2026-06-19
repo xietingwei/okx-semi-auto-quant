@@ -116,6 +116,34 @@ def test_hourly_forecast_snapshot_is_deduplicated(tmp_path: Path) -> None:
     assert evaluation["overall"]["pending"] == 1
 
 
+def test_forecast_versions_can_share_same_hour_without_mixing_learning(
+    tmp_path: Path,
+) -> None:
+    storage = Storage(tmp_path / "qis.sqlite3")
+    predicted_at = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
+    base = {
+        "inst_id": "BTC-USDT",
+        "current_price": 100.0,
+        "forecasts": [{
+            "key": "1d",
+            "days": 1,
+            "target": 105.0,
+            "low": 95.0,
+            "high": 110.0,
+            "expected_return": 0.05,
+            "up_probability": 0.65,
+            "confidence": 0.70,
+        }],
+    }
+
+    storage.record_forecast_snapshot({**base, "model_version": "legacy_v1"}, predicted_at)
+    storage.record_forecast_snapshot(base, predicted_at)
+
+    evaluation = storage.forecast_evaluation()
+
+    assert evaluation["overall"]["pending"] == 1
+
+
 def test_forecast_learning_run_is_auditable(tmp_path: Path) -> None:
     storage = Storage(tmp_path / "qis.sqlite3")
     run_at = datetime(2026, 6, 18, 8, tzinfo=timezone.utc)

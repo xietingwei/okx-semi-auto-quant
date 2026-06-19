@@ -6,6 +6,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 from qis.models import AccountState, TradePlan, utc_now
+from qis.spot_forecast import FORECAST_MODEL_VERSION
 
 
 SCHEMA = """
@@ -86,10 +87,11 @@ CREATE TABLE IF NOT EXISTS spot_forecast_evaluations (
     expected_return REAL NOT NULL,
     up_probability REAL NOT NULL,
     confidence REAL NOT NULL,
+    model_version TEXT NOT NULL DEFAULT 'legacy_v1',
     actual_price REAL,
     actual_return REAL,
     evaluated_at TEXT,
-    UNIQUE(inst_id, horizon, predicted_at)
+    UNIQUE(inst_id, horizon, predicted_at, model_version)
 );
 
 CREATE TABLE IF NOT EXISTS forecast_learning_runs (
@@ -113,6 +115,63 @@ class Storage:
     def init(self) -> None:
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            columns = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(spot_forecast_evaluations)")
+            }
+            if "model_version" not in columns:
+                conn.execute(
+                    "ALTER TABLE spot_forecast_evaluations "
+                    "ADD COLUMN model_version TEXT NOT NULL DEFAULT 'legacy_v1'"
+                )
+            table_sql = str(
+                conn.execute(
+                    """
+                    SELECT sql FROM sqlite_master
+                    WHERE type = 'table' AND name = 'spot_forecast_evaluations'
+                    """
+                ).fetchone()[0]
+            ).replace("\n", " ")
+            if "UNIQUE(inst_id, horizon, predicted_at, model_version)" not in table_sql:
+                conn.executescript(
+                    """
+                    ALTER TABLE spot_forecast_evaluations
+                    RENAME TO spot_forecast_evaluations_legacy;
+
+                    CREATE TABLE spot_forecast_evaluations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        inst_id TEXT NOT NULL,
+                        horizon TEXT NOT NULL,
+                        predicted_at TEXT NOT NULL,
+                        due_at TEXT NOT NULL,
+                        start_price REAL NOT NULL,
+                        target_price REAL NOT NULL,
+                        low_price REAL NOT NULL,
+                        high_price REAL NOT NULL,
+                        expected_return REAL NOT NULL,
+                        up_probability REAL NOT NULL,
+                        confidence REAL NOT NULL,
+                        model_version TEXT NOT NULL DEFAULT 'legacy_v1',
+                        actual_price REAL,
+                        actual_return REAL,
+                        evaluated_at TEXT,
+                        UNIQUE(inst_id, horizon, predicted_at, model_version)
+                    );
+
+                    INSERT INTO spot_forecast_evaluations
+                    (id, inst_id, horizon, predicted_at, due_at, start_price,
+                     target_price, low_price, high_price, expected_return,
+                     up_probability, confidence, model_version, actual_price,
+                     actual_return, evaluated_at)
+                    SELECT id, inst_id, horizon, predicted_at, due_at, start_price,
+                           target_price, low_price, high_price, expected_return,
+                           up_probability, confidence, model_version, actual_price,
+                           actual_return, evaluated_at
+                    FROM spot_forecast_evaluations_legacy;
+
+                    DROP TABLE spot_forecast_evaluations_legacy;
+                    """
+                )
 
     def save_account(self, account: AccountState) -> None:
         self.init()
@@ -370,8 +429,9 @@ class Storage:
                     """
                     INSERT OR IGNORE INTO spot_forecast_evaluations
                     (inst_id, horizon, predicted_at, due_at, start_price, target_price,
-                     low_price, high_price, expected_return, up_probability, confidence)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    low_price, high_price, expected_return, up_probability, confidence,
+                    model_version)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         forecast["inst_id"],
@@ -385,6 +445,7 @@ class Storage:
                         float(item["expected_return"]),
                         float(item["up_probability"]),
                         float(item["confidence"]),
+                        str(forecast.get("model_version", FORECAST_MODEL_VERSION)),
                     ),
                 )
 
@@ -419,8 +480,8 @@ class Storage:
                     INSERT OR IGNORE INTO spot_forecast_evaluations
                     (inst_id, horizon, predicted_at, due_at, start_price, target_price,
                      low_price, high_price, expected_return, up_probability, confidence,
-                     actual_price, actual_return, evaluated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     model_version, actual_price, actual_return, evaluated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         forecast["inst_id"],
@@ -434,6 +495,7 @@ class Storage:
                         float(item["expected_return"]),
                         float(item["up_probability"]),
                         float(item["confidence"]),
+                        str(forecast.get("model_version", FORECAST_MODEL_VERSION)),
                         actual_price,
                         actual_return,
                         due_at.isoformat(),
@@ -483,14 +545,19 @@ class Storage:
                 conn.execute(
                     """
                     SELECT * FROM spot_forecast_evaluations
-                    WHERE actual_price IS NOT NULL
+                    WHERE actual_price IS NOT NULL AND model_version = ?
                     ORDER BY id DESC LIMIT 5000
-                    """
+                    """,
+                    (FORECAST_MODEL_VERSION,),
                 )
             )
             pending = int(
                 conn.execute(
-                    "SELECT COUNT(*) FROM spot_forecast_evaluations WHERE actual_price IS NULL"
+                    """
+                    SELECT COUNT(*) FROM spot_forecast_evaluations
+                    WHERE actual_price IS NULL AND model_version = ?
+                    """,
+                    (FORECAST_MODEL_VERSION,),
                 ).fetchone()[0]
             )
         by_horizon: dict[str, dict] = {}
@@ -626,9 +693,10 @@ class Storage:
                 conn.execute(
                     """
                     SELECT * FROM spot_forecast_evaluations
-                    WHERE actual_price IS NOT NULL
+                    WHERE actual_price IS NOT NULL AND model_version = ?
                     ORDER BY evaluated_at DESC LIMIT 5000
-                    """
+                    """,
+                    (FORECAST_MODEL_VERSION,),
                 )
             )
         result: dict[str, dict] = {}
@@ -681,10 +749,13 @@ class Storage:
             )
             return_scale = _clip(raw_return_scale, 0.12, 1.20)
             return_scale *= 0.35 + 0.65 * direction_reliability
-            return_shift = actual_mean - return_scale * predicted_mean
+            # Global additive intercepts can reverse every asset at once. A
+            # cross-asset calibrator may shrink conviction, but must not decide
+            # direction for an individual instrument.
+            return_shift = 0.0
 
-            # Calibrate probability slope, not just its mean. Poor directional
-            # histories are deliberately pulled toward 50% instead of inverted.
+            # Calibrate probability slope around 50%. Do not apply a global
+            # base-rate offset because it can flip the whole market together.
             centered_probabilities = [value - 0.5 for value in probabilities]
             centered_outcomes = [value - 0.5 for value in actual_up]
             probability_covariance = weighted([
@@ -703,22 +774,19 @@ class Storage:
                 1.05,
             )
             probability_scale *= 0.45 + 0.55 * direction_reliability
-            average_probability = weighted(probabilities)
-            probability_shift = actual_up_rate - (
-                0.5 + (average_probability - 0.5) * probability_scale
-            )
+            probability_shift = 0.0
             interval_scale = _clip(0.80 / max(coverage, 0.30), 0.80, 1.50)
             result[horizon] = {
                 "active": True,
                 "samples": samples,
-                "return_shift": _clip(return_shift, -0.08, 0.08),
+                "return_shift": return_shift,
                 "return_scale": _clip(return_scale, 0.10, 1.20),
-                "probability_shift": _clip(probability_shift, -0.15, 0.15),
+                "probability_shift": probability_shift,
                 "probability_scale": _clip(probability_scale, 0.10, 1.05),
                 "interval_scale": interval_scale,
                 "direction_accuracy": direction_accuracy,
                 "coverage": coverage,
-                "calibration_method": "recency_weighted_bounded_regression_v2",
+                "calibration_method": "direction_preserving_shrinkage_v3",
             }
         return result
 

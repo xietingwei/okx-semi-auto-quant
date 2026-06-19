@@ -7,6 +7,9 @@ from statistics import mean, pstdev
 from qis.models import Candle
 
 
+FORECAST_MODEL_VERSION = "trend_momentum_directional_v3"
+
+
 @dataclass(frozen=True)
 class HorizonForecast:
     key: str
@@ -23,6 +26,7 @@ class HorizonForecast:
 
 @dataclass(frozen=True)
 class SpotForecast:
+    model_version: str
     inst_id: str
     symbol: str
     market_type: str
@@ -120,6 +124,7 @@ class SpotForecastEngine:
             "agreement": f"{positive}/5 周期偏多",
         }
         return SpotForecast(
+            model_version=FORECAST_MODEL_VERSION,
             inst_id=inst_id,
             symbol=inst_id.split("-")[0],
             market_type=(
