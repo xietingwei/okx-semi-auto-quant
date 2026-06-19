@@ -159,9 +159,23 @@ class SpotForecastEngine:
         short_weight = max(0.15, 1 - days / 210)
         annual_trend = trend_30 * short_weight + trend_90 * (1 - short_weight)
         momentum = self._momentum_blend(days, momentum_7, momentum_30, momentum_90)
-        trend_return = math.exp(annual_trend * horizon_years) - 1
+        trend_return = math.exp(
+            self._clip(annual_trend * horizon_years, -0.55, 0.75)
+        ) - 1
         mean_reversion_penalty = -0.18 * momentum if abs(momentum) > volatility * math.sqrt(max(days, 1)) * 1.8 else 0.0
-        expected_return = self._clip(trend_return * 0.58 + momentum * 0.42 + mean_reversion_penalty, -0.45, 0.65)
+        trend_weight, momentum_weight = self._horizon_weights(days)
+        if annual_trend * momentum < 0:
+            # Historical evaluation shows weak 1w/1m direction. When trend and
+            # momentum disagree, do not let short-lived momentum dictate targets.
+            momentum_weight *= 0.45
+            trend_weight = 1 - momentum_weight
+        expected_return = self._clip(
+            trend_return * trend_weight
+            + momentum * momentum_weight
+            + mean_reversion_penalty,
+            -0.35,
+            0.45,
+        )
         sigma = volatility * math.sqrt(days)
         agreement = self._agreement(annual_trend, momentum)
         signal_to_noise = abs(expected_return) / max(sigma, 0.01)
@@ -212,8 +226,18 @@ class SpotForecastEngine:
             return momentum_7 * 0.25 + momentum_30 * 0.55 + momentum_90 * 0.20
         if days <= 90:
             return momentum_7 * 0.10 + momentum_30 * 0.35 + momentum_90 * 0.55
-        scale = days / 90
-        return (momentum_30 * 0.25 + momentum_90 * 0.75) * min(scale, 2)
+        # Long-horizon momentum is a regime feature, not a return multiplier.
+        return momentum_30 * 0.20 + momentum_90 * 0.80
+
+    @staticmethod
+    def _horizon_weights(days: int) -> tuple[float, float]:
+        if days <= 7:
+            return 0.72, 0.28
+        if days <= 30:
+            return 0.70, 0.30
+        if days <= 90:
+            return 0.66, 0.34
+        return 0.72, 0.28
 
     @staticmethod
     def _agreement(trend: float, momentum: float) -> float:

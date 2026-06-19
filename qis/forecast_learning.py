@@ -25,7 +25,7 @@ def apply_strategy_adjustments(forecast: dict, adjustments: dict[str, dict]) -> 
         corrected_return = raw_return * float(adjustment["return_scale"]) + float(
             adjustment["return_shift"]
         )
-        corrected_return = _clip(corrected_return, -0.45, 0.65)
+        corrected_return = _clip(corrected_return, -0.35, 0.45)
 
         raw_probability = float(item["up_probability"])
         corrected_probability = 0.5 + (raw_probability - 0.5) * float(
@@ -57,6 +57,7 @@ def apply_strategy_adjustments(forecast: dict, adjustments: dict[str, dict]) -> 
             "probability_shift": float(adjustment["probability_shift"]),
             "probability_scale": float(adjustment["probability_scale"]),
             "interval_scale": float(adjustment["interval_scale"]),
+            "calibration_method": adjustment.get("calibration_method", "bounded"),
         }
     result["learning_updated_at"] = hour_bucket().isoformat()
     return result

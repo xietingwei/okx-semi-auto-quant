@@ -633,7 +633,7 @@ class Storage:
             )
         result: dict[str, dict] = {}
         for horizon in ("1d", "1w", "1m", "3m", "6m"):
-            rows = [row for row in completed if row["horizon"] == horizon]
+            rows = [row for row in completed if row["horizon"] == horizon][:1200]
             samples = len(rows)
             if samples < minimum_samples:
                 result[horizon] = {"active": False, "samples": samples}
@@ -642,36 +642,83 @@ class Storage:
             predicted = [float(row["expected_return"]) for row in rows]
             actual = [float(row["actual_return"]) for row in rows]
             probabilities = [float(row["up_probability"]) for row in rows]
-            actual_up_rate = sum(1 for value in actual if value > 0) / samples
-            average_probability = sum(probabilities) / samples
-            direction_accuracy = sum(
-                1 for left, right in zip(predicted, actual) if (left >= 0) == (right >= 0)
-            ) / samples
-            bias = sum(left - right for left, right in zip(predicted, actual)) / samples
-            predicted_abs = sum(abs(value) for value in predicted) / samples
-            actual_abs = sum(abs(value) for value in actual) / samples
-            coverage = sum(
-                1
+            # Prefer recent outcomes while retaining a long enough effective history.
+            weights = [0.997 ** index for index in range(samples)]
+            weight_sum = sum(weights)
+            weighted = lambda values: sum(
+                weight * value for weight, value in zip(weights, values)
+            ) / weight_sum
+            actual_up = [1.0 if value > 0 else 0.0 for value in actual]
+            actual_up_rate = weighted(actual_up)
+            direction_accuracy = weighted([
+                1.0 if (left >= 0) == (right >= 0) else 0.0
+                for left, right in zip(predicted, actual)
+            ])
+            coverage = weighted([
+                1.0
+                if float(row["low_price"])
+                <= float(row["actual_price"])
+                <= float(row["high_price"])
+                else 0.0
                 for row in rows
-                if float(row["low_price"]) <= float(row["actual_price"]) <= float(row["high_price"])
-            ) / samples
+            ])
 
-            return_scale = _clip(actual_abs / max(predicted_abs, 0.005), 0.55, 1.35)
-            return_scale *= _clip(direction_accuracy / 0.58, 0.70, 1.10)
-            direction_reliability = _clip((direction_accuracy - 0.45) / 0.20, 0.0, 1.0)
-            probability_shift = _clip(actual_up_rate - average_probability, -0.12, 0.12)
-            probability_scale = _clip(direction_accuracy / 0.58, 0.65, 1.10)
+            # Bounded weighted regression: actual_return ~= shift + scale * prediction.
+            predicted_mean = weighted(predicted)
+            actual_mean = weighted(actual)
+            covariance = weighted([
+                (left - predicted_mean) * (right - actual_mean)
+                for left, right in zip(predicted, actual)
+            ])
+            predicted_variance = weighted([
+                (value - predicted_mean) ** 2 for value in predicted
+            ])
+            raw_return_scale = covariance / max(predicted_variance, 1e-6)
+            direction_reliability = _clip(
+                (direction_accuracy - 0.44) / 0.18,
+                0.0,
+                1.0,
+            )
+            return_scale = _clip(raw_return_scale, 0.12, 1.20)
+            return_scale *= 0.35 + 0.65 * direction_reliability
+            return_shift = actual_mean - return_scale * predicted_mean
+
+            # Calibrate probability slope, not just its mean. Poor directional
+            # histories are deliberately pulled toward 50% instead of inverted.
+            centered_probabilities = [value - 0.5 for value in probabilities]
+            centered_outcomes = [value - 0.5 for value in actual_up]
+            probability_covariance = weighted([
+                left * right
+                for left, right in zip(
+                    centered_probabilities,
+                    centered_outcomes,
+                )
+            ])
+            probability_variance = weighted([
+                value ** 2 for value in centered_probabilities
+            ])
+            probability_scale = _clip(
+                probability_covariance / max(probability_variance, 1e-6),
+                0.15,
+                1.05,
+            )
+            probability_scale *= 0.45 + 0.55 * direction_reliability
+            average_probability = weighted(probabilities)
+            probability_shift = actual_up_rate - (
+                0.5 + (average_probability - 0.5) * probability_scale
+            )
             interval_scale = _clip(0.80 / max(coverage, 0.30), 0.80, 1.50)
             result[horizon] = {
                 "active": True,
                 "samples": samples,
-                "return_shift": _clip(-bias, -0.05, 0.05) * direction_reliability,
-                "return_scale": return_scale,
-                "probability_shift": probability_shift,
-                "probability_scale": probability_scale,
+                "return_shift": _clip(return_shift, -0.08, 0.08),
+                "return_scale": _clip(return_scale, 0.10, 1.20),
+                "probability_shift": _clip(probability_shift, -0.15, 0.15),
+                "probability_scale": _clip(probability_scale, 0.10, 1.05),
                 "interval_scale": interval_scale,
                 "direction_accuracy": direction_accuracy,
                 "coverage": coverage,
+                "calibration_method": "recency_weighted_bounded_regression_v2",
             }
         return result
 

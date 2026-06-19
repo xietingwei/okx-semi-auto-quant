@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 import json
 
+import pytest
+
 from qis.models import Candle
 from qis.spot_dashboard import render_spot_dashboard_cache
 from qis.spot_forecast import SpotForecastEngine
@@ -31,6 +33,15 @@ def test_spot_forecast_has_all_horizons() -> None:
     assert forecast is not None
     assert [item.key for item in forecast.forecasts] == ["1d", "1w", "1m", "3m", "6m"]
     assert all(item.low <= item.target <= item.high for item in forecast.forecasts)
+    assert max(abs(item.expected_return) for item in forecast.forecasts) <= 0.45
+
+
+def test_long_horizon_momentum_is_not_linearly_amplified() -> None:
+    value_90 = SpotForecastEngine._momentum_blend(90, 0.1, 0.2, 0.3)
+    value_180 = SpotForecastEngine._momentum_blend(180, 0.1, 0.2, 0.3)
+
+    assert value_180 == pytest.approx(0.28)
+    assert value_180 <= value_90 * 1.2
 
 
 def test_spot_forecast_marks_equity_mapping() -> None:
