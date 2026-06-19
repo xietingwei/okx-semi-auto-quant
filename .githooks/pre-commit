@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+cd "$ROOT_DIR"
+
+git diff --cached --check
+
+if git diff --cached --name-only --diff-filter=ACMR | grep -Eq '(^|/)(qis|tests)/.*\.py$'; then
+  python3 -m pytest -q
+fi
