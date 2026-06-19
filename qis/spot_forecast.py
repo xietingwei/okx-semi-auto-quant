@@ -7,7 +7,7 @@ from statistics import mean, pstdev
 from qis.models import Candle
 
 
-FORECAST_MODEL_VERSION = "trend_momentum_soft_bound_v4"
+FORECAST_MODEL_VERSION = "live_price_features_v5"
 
 
 @dataclass(frozen=True)
@@ -73,12 +73,16 @@ class SpotForecastEngine:
         model_price = closes[-1]
         current = live_price if live_price is not None and live_price > 0 else model_price
         daily_change = current / closes[-1] - 1
+        # The last daily candle returned by the exchange is still forming. Use
+        # its live ticker price as the newest observation instead of anchoring
+        # trend and momentum to the previous UTC close.
+        feature_closes = [*closes, current] if live_price is not None and live_price > 0 else closes
         volatility = pstdev(log_returns[-60:]) if len(log_returns) >= 2 else 0.0
-        trend_30 = self._annualized_slope(closes[-30:])
-        trend_90 = self._annualized_slope(closes[-90:])
-        momentum_7 = model_price / closes[-8] - 1
-        momentum_30 = model_price / closes[-31] - 1
-        momentum_90 = model_price / closes[-91] - 1
+        trend_30 = self._annualized_slope(feature_closes[-30:])
+        trend_90 = self._annualized_slope(feature_closes[-90:])
+        momentum_7 = current / feature_closes[-8] - 1
+        momentum_30 = current / feature_closes[-31] - 1
+        momentum_90 = current / feature_closes[-91] - 1
         regime = self._regime(trend_30, trend_90, volatility)
         forecasts = [
             self._forecast(

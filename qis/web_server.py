@@ -15,9 +15,11 @@ from qis.decision_assistant import (
     build_decision_context,
 )
 from qis.forecast_learning import apply_strategy_adjustments, hour_bucket
+from qis.models import Candle
 from qis.okx import OkxClient, OkxError
 from qis.position_risk import analyze_position
 from qis.spot_dashboard import render_spot_dashboard_cache
+from qis.spot_forecast import SpotForecastEngine
 from qis.storage import Storage
 
 
@@ -301,9 +303,9 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
         quotes = self.quote_service.quotes()
         adjustments = self.storage.forecast_strategy_adjustments()
         return {
-            inst_id: _rebase_forecast(
-                apply_strategy_adjustments(forecast, adjustments),
-                quotes.get(inst_id),
+            inst_id: apply_strategy_adjustments(
+                _rebase_forecast(forecast, quotes.get(inst_id)),
+                adjustments,
             )
             for inst_id, forecast in forecasts.items()
         }
@@ -364,16 +366,54 @@ def _rebase_forecast(forecast: dict, quote: dict | None) -> dict:
     base_price = float(forecast["current_price"])
     if base_price <= 0:
         return forecast
-    result = {**forecast}
-    result["current_price"] = live_price
-    result["quote_time"] = (
+    quote_time = (
         datetime.fromtimestamp(
             int(quote["ts"]) / 1000,
             tz=timezone.utc,
-        ).isoformat()
+        )
         if quote.get("ts")
-        else forecast.get("quote_time")
+        else datetime.now(timezone.utc)
     )
+    history = forecast.get("history") or []
+    if len(history) >= 90:
+        candles = [
+            Candle(
+                ts=datetime.fromisoformat(str(item["date"]).replace("Z", "+00:00")),
+                open=float(item.get("open", item["close"])),
+                high=float(item.get("high", item["close"])),
+                low=float(item.get("low", item["close"])),
+                close=float(item["close"]),
+                volume=float(item.get("volume", 0)),
+            )
+            for item in history
+        ]
+        candles.append(
+            Candle(
+                ts=quote_time,
+                open=live_price,
+                high=live_price,
+                low=live_price,
+                close=live_price,
+                volume=0.0,
+            )
+        )
+        refreshed = SpotForecastEngine().analyze(
+            str(forecast["inst_id"]),
+            candles,
+            live_price=live_price,
+            quote_time=quote_time,
+        )
+        if refreshed is not None:
+            from dataclasses import asdict
+
+            result = asdict(refreshed)
+            result["forecast_base_price"] = live_price
+            result["quote_source"] = "OKX ticker · 实时特征重算"
+            return result
+    result = {**forecast}
+    result["current_price"] = live_price
+    result["forecast_base_price"] = live_price
+    result["quote_time"] = quote_time.isoformat()
     result["quote_source"] = "OKX ticker · 5秒动态基准"
     try:
         open_24h = float(quote.get("open24h") or 0)

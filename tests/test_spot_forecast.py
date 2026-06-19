@@ -70,6 +70,11 @@ def test_spot_forecast_uses_live_price_without_polluting_closed_history() -> Non
 
     assert forecast is not None
     assert forecast.current_price == 150.0
+    baseline = SpotForecastEngine().analyze("BTC-USDT", _daily_candles())
+    assert baseline is not None
+    assert forecast.forecasts[0].expected_return != pytest.approx(
+        baseline.forecasts[0].expected_return
+    )
     assert forecast.quote_time == quote_time.isoformat()
     assert forecast.quote_source == "OKX ticker"
     assert {"open", "high", "low", "close", "volume"} <= set(
