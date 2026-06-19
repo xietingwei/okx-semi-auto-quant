@@ -44,6 +44,14 @@ def test_long_horizon_momentum_is_not_linearly_amplified() -> None:
     assert value_180 <= value_90 * 1.2
 
 
+def test_expected_return_soft_bound_preserves_extreme_ranking() -> None:
+    moderate = SpotForecastEngine._soft_bound(0.60, 0.35, 0.45)
+    strong = SpotForecastEngine._soft_bound(1.20, 0.35, 0.45)
+
+    assert 0 < moderate < strong < 0.45
+    assert SpotForecastEngine._soft_bound(-0.80, 0.35, 0.45) > -0.35
+
+
 def test_spot_forecast_marks_equity_mapping() -> None:
     forecast = SpotForecastEngine().analyze("NVDA-USDT-SWAP", _daily_candles())
 

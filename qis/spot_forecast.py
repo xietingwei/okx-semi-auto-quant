@@ -7,7 +7,7 @@ from statistics import mean, pstdev
 from qis.models import Candle
 
 
-FORECAST_MODEL_VERSION = "trend_momentum_directional_v3"
+FORECAST_MODEL_VERSION = "trend_momentum_soft_bound_v4"
 
 
 @dataclass(frozen=True)
@@ -174,13 +174,12 @@ class SpotForecastEngine:
             # momentum disagree, do not let short-lived momentum dictate targets.
             momentum_weight *= 0.45
             trend_weight = 1 - momentum_weight
-        expected_return = self._clip(
+        raw_expected_return = (
             trend_return * trend_weight
             + momentum * momentum_weight
-            + mean_reversion_penalty,
-            -0.35,
-            0.45,
+            + mean_reversion_penalty
         )
+        expected_return = self._soft_bound(raw_expected_return, 0.35, 0.45)
         sigma = volatility * math.sqrt(days)
         agreement = self._agreement(annual_trend, momentum)
         signal_to_noise = abs(expected_return) / max(sigma, 0.01)
@@ -243,6 +242,12 @@ class SpotForecastEngine:
         if days <= 90:
             return 0.66, 0.34
         return 0.72, 0.28
+
+    @staticmethod
+    def _soft_bound(value: float, negative_limit: float, positive_limit: float) -> float:
+        """Preserve cross-sectional ranking without hard-clipping forecasts."""
+        limit = positive_limit if value >= 0 else negative_limit
+        return limit * math.tanh(value / limit)
 
     @staticmethod
     def _agreement(trend: float, momentum: float) -> float:
