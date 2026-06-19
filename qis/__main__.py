@@ -139,8 +139,10 @@ def _render_spot(settings, output: Path) -> None:
     evaluation = storage.forecast_evaluation()
     advice = storage.forecast_advice()
     predicted_at = hour_bucket(observed_at)
+    calibrated_forecasts = []
     for forecast in forecasts:
         calibrated = apply_strategy_adjustments(asdict(forecast), adjustments)
+        calibrated_forecasts.append(calibrated)
         storage.record_forecast_snapshot(calibrated, predicted_at=predicted_at)
     storage.record_forecast_learning_run(
         predicted_at,
@@ -149,7 +151,7 @@ def _render_spot(settings, output: Path) -> None:
         adjustments,
         advice,
     )
-    path = render_spot_dashboard(forecasts, output)
+    path = render_spot_dashboard(calibrated_forecasts, output)
     print(f"Spot dashboard written to {path.resolve()} ({len(forecasts)} assets)", flush=True)
 
 

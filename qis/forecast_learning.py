@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timezone
 
+from qis.spot_forecast import decide_strategy, score_opportunity
 
 def hour_bucket(value: datetime | None = None) -> datetime:
     value = value or datetime.now(timezone.utc)
@@ -75,6 +76,15 @@ def apply_strategy_adjustments(forecast: dict, adjustments: dict[str, dict]) -> 
             "interval_scale": float(adjustment["interval_scale"]),
             "calibration_method": adjustment.get("calibration_method", "bounded"),
         }
+    result["opportunity_score"] = score_opportunity(
+        result["forecasts"],
+        float(result.get("volatility", 0.0)),
+    )
+    result["decision"] = decide_strategy(
+        result["forecasts"],
+        result["opportunity_score"],
+        float(result.get("market_context", {}).get("market_environment_score", 0.0)),
+    )
     result["learning_updated_at"] = hour_bucket().isoformat()
     return result
 

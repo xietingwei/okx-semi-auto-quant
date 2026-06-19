@@ -38,6 +38,7 @@ class SpotForecast:
     volatility: float
     forecasts: list[HorizonForecast]
     history: list[dict[str, float | str]]
+    opportunity_score: int
     decision: str
     buy_zone_low: float
     buy_zone_high: float
@@ -106,20 +107,13 @@ class SpotForecastEngine:
         buy_zone_low = current - atr * 0.75
         buy_zone_high = current + atr * 0.15
         invalidation = current - atr * 1.8
-        positive = sum(1 for item in forecasts if item.expected_return > 0)
-        market_environment_score = float(
-            (market_context or {}).get("market_environment_score", 0.0)
+        opportunity_score = score_opportunity(forecasts, volatility)
+        decision = decide_strategy(
+            forecasts,
+            opportunity_score,
+            float((market_context or {}).get("market_environment_score", 0.0)),
         )
-        if positive >= 4 and forecasts[1].confidence >= 0.55:
-            decision = (
-                "逆势等待确认"
-                if market_environment_score <= -0.35
-                else "分批关注买入"
-            )
-        elif positive <= 1:
-            decision = "等待趋势企稳"
-        else:
-            decision = "中性观察"
+        positive = sum(1 for item in forecasts if item.expected_return > 0)
         history = [
             {
                 "date": item.ts.isoformat(),
@@ -160,6 +154,7 @@ class SpotForecastEngine:
             volatility=volatility,
             forecasts=forecasts,
             history=history,
+            opportunity_score=opportunity_score,
             decision=decision,
             buy_zone_low=buy_zone_low,
             buy_zone_high=buy_zone_high,
@@ -365,3 +360,81 @@ class SpotForecastEngine:
     @staticmethod
     def _clip(value: float, low: float, high: float) -> float:
         return max(low, min(high, value))
+
+
+def score_opportunity(forecasts: list[HorizonForecast] | list[dict], volatility: float) -> int:
+    by_key = {
+        str(_value(item, "key")): item
+        for item in forecasts
+    }
+    rows = [by_key.get(key) for key in ("1w", "1m", "3m")]
+    if any(item is None for item in rows):
+        return 0
+    week, month, quarter = rows
+    probability = (
+        float(_value(week, "up_probability")) * 0.25
+        + float(_value(month, "up_probability")) * 0.45
+        + float(_value(quarter, "up_probability")) * 0.30
+    )
+    expected_return = (
+        float(_value(week, "expected_return")) * 0.20
+        + float(_value(month, "expected_return")) * 0.45
+        + float(_value(quarter, "expected_return")) * 0.35
+    )
+    confidence = (
+        float(_value(week, "confidence")) * 0.25
+        + float(_value(month, "confidence")) * 0.45
+        + float(_value(quarter, "confidence")) * 0.30
+    )
+    agreement = sum(
+        1 for item in rows if float(_value(item, "expected_return")) > 0
+    ) / 3
+    return_quality = max(0.0, min(1.0, (expected_return + 0.02) / 0.18))
+    volatility_penalty = min(12.0, max(0.0, volatility) * 120)
+    score = (
+        probability * 0.38
+        + return_quality * 0.27
+        + confidence * 0.20
+        + agreement * 0.15
+    ) * 100 - volatility_penalty
+    return round(max(0.0, min(100.0, score)))
+
+
+def decide_strategy(
+    forecasts: list[HorizonForecast] | list[dict],
+    score: int,
+    market_environment_score: float,
+) -> str:
+    by_key = {str(_value(item, "key")): item for item in forecasts}
+    rows = [by_key.get(key) for key in ("1w", "1m", "3m")]
+    if any(item is None for item in rows):
+        return "数据不足"
+    positive = sum(
+        1 for item in rows if float(_value(item, "expected_return")) > 0
+    )
+    month = by_key["1m"]
+    weighted_confidence = sum(
+        float(_value(item, "confidence")) * weight
+        for item, weight in zip(rows, (0.25, 0.45, 0.30))
+    )
+    buy_ready = (
+        score >= 70
+        and positive == 3
+        and float(_value(month, "up_probability")) >= 0.60
+        and weighted_confidence >= 0.55
+    )
+    if buy_ready:
+        return (
+            "逆势等待确认"
+            if market_environment_score <= -0.35
+            else "分批关注买入"
+        )
+    if score >= 60 and positive >= 2:
+        return "观察等待触发"
+    if score < 45 or positive <= 1:
+        return "等待趋势企稳"
+    return "中性观察"
+
+
+def _value(item: HorizonForecast | dict, key: str):
+    return item.get(key) if isinstance(item, dict) else getattr(item, key)

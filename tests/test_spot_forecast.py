@@ -5,7 +5,7 @@ import pytest
 
 from qis.models import Candle
 from qis.spot_dashboard import render_spot_dashboard_cache
-from qis.spot_forecast import SpotForecastEngine
+from qis.spot_forecast import SpotForecastEngine, decide_strategy
 
 
 def _daily_candles(count: int = 320) -> list[Candle]:
@@ -72,6 +72,23 @@ def test_risk_contraction_blocks_normal_buy_decision() -> None:
 
     assert forecast is not None
     assert forecast.decision != "分批关注买入"
+    assert 0 <= forecast.opportunity_score <= 100
+
+
+def test_strategy_never_recommends_buy_below_70_score() -> None:
+    forecasts = [
+        {
+            "key": key,
+            "expected_return": 0.08,
+            "up_probability": 0.65,
+            "confidence": 0.65,
+        }
+        for key in ("1w", "1m", "3m")
+    ]
+
+    assert decide_strategy(forecasts, 50, 0.2) == "中性观察"
+    assert decide_strategy(forecasts, 69, 0.2) == "观察等待触发"
+    assert decide_strategy(forecasts, 70, 0.2) == "分批关注买入"
 
 
 def test_spot_forecast_uses_live_price_without_polluting_closed_history() -> None:
