@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,7 @@ from qis.doctor import run_doctor
 from qis.external_intel import ExternalIntelAnalyzer
 from qis.forecast_learning import apply_strategy_adjustments, hour_bucket
 from qis.macro import MacroAnalyzer
+from qis.market_factors import build_market_contexts
 from qis.models import Mode
 from qis.okx import OkxClient, OkxError
 from qis.portal import render_portal
@@ -73,12 +75,29 @@ def _render_spot(settings, output: Path) -> None:
     forecasts = []
     inst_ids = _discover_spot_ids(client, settings)
     ticker_map = _ticker_map(client)
-    for inst_id in inst_ids:
+    candles_by_inst = {}
+    def fetch_candles(inst_id: str):
         try:
-            candles = client.public_candles(inst_id, "1D", limit=300)
+            return inst_id, client.public_candles(inst_id, "1D", limit=300), None
         except OkxError as exc:
-            print(f"Skip {inst_id}: {exc}", flush=True)
-            continue
+            return inst_id, None, exc
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        for inst_id, candles, error in executor.map(fetch_candles, inst_ids):
+            if error is not None:
+                print(f"Skip {inst_id}: {error}", flush=True)
+            elif candles:
+                candles_by_inst[inst_id] = candles
+    macro = MacroAnalyzer().analyze()
+    contexts = build_market_contexts(
+        client,
+        tuple(candles_by_inst),
+        ticker_map,
+        candles_by_inst,
+        macro,
+        Path("data/market_factors.json"),
+    )
+    for inst_id, candles in candles_by_inst.items():
         ticker = ticker_map.get(inst_id, {})
         try:
             live_price = float(ticker.get("last") or 0) or None
@@ -94,6 +113,7 @@ def _render_spot(settings, output: Path) -> None:
             candles,
             live_price=live_price,
             quote_time=quote_time,
+            market_context=contexts.get(inst_id),
         )
         if forecast:
             forecasts.append(forecast)

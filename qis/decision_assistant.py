@@ -291,6 +291,7 @@ def _compact_forecast(selected: dict | None, horizon: dict | None) -> dict | Non
         "buy_zone": [selected.get("buy_zone_low"), selected.get("buy_zone_high")],
         "invalidation": selected.get("invalidation"),
         "factors": selected.get("factors"),
+        "market_context": selected.get("market_context"),
         "selected_horizon": horizon,
         "all_horizons": selected.get("forecasts", []),
         "quote_time": selected.get("quote_time"),

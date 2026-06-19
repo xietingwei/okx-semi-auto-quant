@@ -402,6 +402,7 @@ def _rebase_forecast(forecast: dict, quote: dict | None) -> dict:
             candles,
             live_price=live_price,
             quote_time=quote_time,
+            market_context=forecast.get("market_context") or {},
         )
         if refreshed is not None:
             from dataclasses import asdict

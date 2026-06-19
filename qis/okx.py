@@ -84,6 +84,38 @@ class OkxClient:
             auth=False,
         )
 
+    def public_order_book(self, inst_id: str, depth: int = 20) -> dict[str, Any]:
+        rows = self._request(
+            "GET",
+            "/api/v5/market/books",
+            params={"instId": inst_id, "sz": str(max(1, min(depth, 400)))},
+            auth=False,
+            attempts=1,
+            timeout=8,
+        )
+        return rows[0] if rows else {}
+
+    def public_open_interest(self, inst_type: str = "SWAP") -> list[dict[str, Any]]:
+        return self._request(
+            "GET",
+            "/api/v5/public/open-interest",
+            params={"instType": inst_type},
+            auth=False,
+            attempts=1,
+            timeout=8,
+        )
+
+    def public_funding_rate(self, inst_id: str) -> dict[str, Any]:
+        rows = self._request(
+            "GET",
+            "/api/v5/public/funding-rate",
+            params={"instId": inst_id},
+            auth=False,
+            attempts=1,
+            timeout=8,
+        )
+        return rows[0] if rows else {}
+
     def order_size_from_base(self, inst_id: str, base_size: float) -> str:
         instrument = self.public_instrument(inst_id)
         return self.contract_size_from_base(
@@ -122,6 +154,8 @@ class OkxClient:
         params: dict[str, str] | None = None,
         body: dict[str, Any] | None = None,
         auth: bool = False,
+        attempts: int = 3,
+        timeout: float = 15,
     ) -> Any:
         query = f"?{urllib.parse.urlencode(params)}" if params else ""
         url = f"{self.BASE_URL}{path}{query}"
@@ -141,14 +175,14 @@ class OkxClient:
             method=method,
         )
         last_error: Exception | None = None
-        for attempt in range(3):
+        for attempt in range(attempts):
             try:
-                with urllib.request.urlopen(request, timeout=15) as response:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
                     raw = response.read().decode()
                 break
             except Exception as exc:
                 last_error = exc
-                if attempt < 2:
+                if attempt < attempts - 1:
                     time.sleep(0.5 * (attempt + 1))
         else:
             raise OkxError(f"OKX request failed: {last_error}") from last_error

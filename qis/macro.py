@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 import json
 import math
 import urllib.parse
@@ -25,7 +26,9 @@ class MacroAnalyzer:
     }
 
     def analyze(self) -> MacroRegime:
-        closes = {symbol: self._daily_closes(symbol) for symbol in self.SYMBOLS}
+        symbols = list(self.SYMBOLS)
+        with ThreadPoolExecutor(max_workers=len(symbols)) as executor:
+            closes = dict(zip(symbols, executor.map(self._daily_closes, symbols)))
         components: dict[str, float] = {}
         if closes.get("SPY"):
             components["spy_20d"] = self._ret(closes["SPY"], 20)

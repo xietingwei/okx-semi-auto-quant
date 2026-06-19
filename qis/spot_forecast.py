@@ -7,7 +7,7 @@ from statistics import mean, pstdev
 from qis.models import Candle
 
 
-FORECAST_MODEL_VERSION = "live_price_features_v5"
+FORECAST_MODEL_VERSION = "market_microstructure_macro_v6"
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,7 @@ class SpotForecast:
     buy_zone_high: float
     invalidation: float
     factors: dict[str, str]
+    market_context: dict
 
 
 class SpotForecastEngine:
@@ -60,6 +61,7 @@ class SpotForecastEngine:
         candles: list[Candle],
         live_price: float | None = None,
         quote_time: datetime | None = None,
+        market_context: dict | None = None,
     ) -> SpotForecast | None:
         closed = candles[:-1] if len(candles) > 1 else candles
         if len(closed) < 90:
@@ -96,6 +98,7 @@ class SpotForecastEngine:
                 momentum_7,
                 momentum_30,
                 momentum_90,
+                market_context or {},
             )
             for key, label, days in self.HORIZONS
         ]
@@ -126,6 +129,11 @@ class SpotForecastEngine:
             "momentum": self._strength_label((momentum_7 + momentum_30) / 2),
             "volatility": "高" if volatility > 0.045 else "中" if volatility > 0.025 else "低",
             "agreement": f"{positive}/5 周期偏多",
+            "orderbook": self._factor_label((market_context or {}).get("orderbook_score", 0.0)),
+            "funding": self._factor_label((market_context or {}).get("funding_score", 0.0)),
+            "open_interest": self._factor_label((market_context or {}).get("open_interest_score", 0.0)),
+            "volume_flow": self._factor_label((market_context or {}).get("volume_score", 0.0)),
+            "macro": self._factor_label((market_context or {}).get("macro_score", 0.0)),
         }
         return SpotForecast(
             model_version=FORECAST_MODEL_VERSION,
@@ -149,6 +157,7 @@ class SpotForecastEngine:
             buy_zone_high=buy_zone_high,
             invalidation=invalidation,
             factors=factors,
+            market_context=market_context or {},
         )
 
     def _forecast(
@@ -163,6 +172,7 @@ class SpotForecastEngine:
         momentum_7: float,
         momentum_30: float,
         momentum_90: float,
+        market_context: dict,
     ) -> HorizonForecast:
         horizon_years = days / 365
         short_weight = max(0.15, 1 - days / 210)
@@ -178,16 +188,37 @@ class SpotForecastEngine:
             # momentum disagree, do not let short-lived momentum dictate targets.
             momentum_weight *= 0.45
             trend_weight = 1 - momentum_weight
-        raw_expected_return = (
+        base_expected_return = (
             trend_return * trend_weight
             + momentum * momentum_weight
             + mean_reversion_penalty
         )
+        factor_score, factor_delta = self._factor_adjustment(days, market_context)
+        raw_expected_return = base_expected_return + factor_delta
         expected_return = self._soft_bound(raw_expected_return, 0.35, 0.45)
         sigma = volatility * math.sqrt(days)
         agreement = self._agreement(annual_trend, momentum)
         signal_to_noise = abs(expected_return) / max(sigma, 0.01)
-        confidence = self._clip(0.38 + agreement * 0.18 + min(signal_to_noise, 2) * 0.13, 0.32, 0.82)
+        factor_alignment = (
+            1.0
+            if base_expected_return * factor_score > 0
+            else -1.0
+            if base_expected_return * factor_score < 0
+            else 0.0
+        )
+        spread_penalty = min(
+            0.08,
+            max(0.0, float(market_context.get("spread_bps", 0.0)) - 3.0) / 250,
+        )
+        confidence = self._clip(
+            0.38
+            + agreement * 0.18
+            + min(signal_to_noise, 2) * 0.13
+            + factor_alignment * min(abs(factor_score), 1.0) * 0.06
+            - spread_penalty,
+            0.32,
+            0.82,
+        )
         z_score = expected_return / max(sigma, 0.01)
         up_probability = self._clip(1 / (1 + math.exp(-z_score * 1.15)), 0.12, 0.88)
         target = current * (1 + expected_return)
@@ -254,6 +285,30 @@ class SpotForecastEngine:
         return limit * math.tanh(value / limit)
 
     @staticmethod
+    def _factor_adjustment(days: int, context: dict) -> tuple[float, float]:
+        if days <= 7:
+            weights = (0.40, 0.15, 0.10, 0.25, 0.10)
+            max_delta = 0.035
+        elif days <= 30:
+            weights = (0.15, 0.20, 0.20, 0.25, 0.20)
+            max_delta = 0.050
+        elif days <= 90:
+            weights = (0.05, 0.20, 0.25, 0.25, 0.25)
+            max_delta = 0.060
+        else:
+            weights = (0.02, 0.18, 0.27, 0.18, 0.35)
+            max_delta = 0.055
+        values = (
+            float(context.get("orderbook_score", 0.0)),
+            float(context.get("funding_score", 0.0)),
+            float(context.get("open_interest_score", 0.0)),
+            float(context.get("volume_score", 0.0)),
+            float(context.get("macro_score", 0.0)),
+        )
+        score = sum(weight * max(-1.0, min(1.0, value)) for weight, value in zip(weights, values))
+        return score, score * max_delta
+
+    @staticmethod
     def _agreement(trend: float, momentum: float) -> float:
         if trend == 0 or momentum == 0:
             return 0.25
@@ -275,6 +330,14 @@ class SpotForecastEngine:
             return "偏强"
         if value < -0.08:
             return "偏弱"
+        return "中性"
+
+    @staticmethod
+    def _factor_label(value: float) -> str:
+        if value >= 0.18:
+            return "利多"
+        if value <= -0.18:
+            return "利空"
         return "中性"
 
     @staticmethod

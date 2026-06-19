@@ -455,9 +455,10 @@ class Storage:
             row = conn.execute(
                 """
                 SELECT 1 FROM spot_forecast_evaluations
-                WHERE inst_id = ? AND actual_price IS NOT NULL LIMIT 1
+                WHERE inst_id = ? AND actual_price IS NOT NULL
+                  AND model_version = ? LIMIT 1
                 """,
-                (inst_id,),
+                (inst_id, FORECAST_MODEL_VERSION),
             ).fetchone()
         return row is not None
 
