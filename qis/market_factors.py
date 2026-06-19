@@ -11,12 +11,82 @@ from qis.models import Candle
 from qis.okx import OkxClient, OkxError
 
 
+def global_market_environment(
+    inst_ids: tuple[str, ...],
+    ticker_map: dict[str, dict],
+    candles_by_inst: dict[str, list[Candle]],
+) -> dict:
+    crypto_ids = [
+        inst_id
+        for inst_id in inst_ids
+        if not inst_id.endswith("-SWAP") and inst_id in candles_by_inst
+    ]
+    daily_changes = [
+        _daily_change(ticker_map.get(inst_id, {}), candles_by_inst[inst_id])
+        for inst_id in crypto_ids
+    ]
+    breadth = (
+        sum(1 for value in daily_changes if value > 0) / len(daily_changes)
+        if daily_changes
+        else 0.5
+    )
+    trend_votes = []
+    volatility_values = []
+    volume_ratios = []
+    for inst_id in crypto_ids:
+        candles = candles_by_inst[inst_id]
+        closed = candles[:-1] if len(candles) > 1 else candles
+        if len(closed) >= 30:
+            current = _number(ticker_map.get(inst_id, {}).get("last")) or closed[-1].close
+            average_30 = sum(item.close for item in closed[-30:]) / 30
+            trend_votes.append(1.0 if current > average_30 else 0.0)
+            returns = [
+                math.log(right.close / left.close)
+                for left, right in zip(closed[-31:-1], closed[-30:])
+                if left.close > 0 and right.close > 0
+            ]
+            if returns:
+                mean_return = sum(returns) / len(returns)
+                variance = sum((value - mean_return) ** 2 for value in returns) / len(returns)
+                volatility_values.append(math.sqrt(variance))
+            _, volume_ratio = _volume_structure(candles)
+            volume_ratios.append(volume_ratio)
+    trend_breadth = sum(trend_votes) / len(trend_votes) if trend_votes else 0.5
+    btc_score = _btc_anchor(candles_by_inst.get("BTC-USDT", []), ticker_map.get("BTC-USDT", {}))
+    median_volatility = _median(volatility_values)
+    volatility_score = -math.tanh(max(0.0, median_volatility - 0.035) * 18)
+    median_volume_ratio = _median(volume_ratios) or 1.0
+    liquidity_score = math.tanh((median_volume_ratio - 1.0) * 1.5)
+    breadth_score = math.tanh((breadth - 0.5) * 3.0)
+    trend_score = math.tanh((trend_breadth - 0.5) * 3.0)
+    score = _clip(
+        breadth_score * 0.30
+        + trend_score * 0.25
+        + btc_score * 0.25
+        + liquidity_score * 0.10
+        + volatility_score * 0.10
+    )
+    label = "风险扩张" if score >= 0.20 else "风险收缩" if score <= -0.20 else "过渡震荡"
+    return {
+        "score": score,
+        "label": label,
+        "components": {
+            "up_breadth": breadth,
+            "above_30d_breadth": trend_breadth,
+            "btc_anchor": btc_score,
+            "median_volatility": median_volatility,
+            "volume_participation": median_volume_ratio,
+        },
+    }
+
+
 def build_market_contexts(
     client: OkxClient,
     inst_ids: tuple[str, ...],
     ticker_map: dict[str, dict],
     candles_by_inst: dict[str, list[Candle]],
     macro: MacroRegime,
+    environment: dict,
     cache_path: Path,
 ) -> dict[str, dict]:
     previous = _load_cache(cache_path)
@@ -67,6 +137,7 @@ def build_market_contexts(
             ticker=ticker,
             candles=candles_by_inst.get(inst_id, []),
             macro=macro,
+            environment=environment,
             open_interest=oi,
             open_interest_change=oi_change,
             open_interest_history_available=previous_oi > 0,
@@ -82,6 +153,7 @@ def market_context(
     ticker: dict,
     candles: list[Candle],
     macro: MacroRegime,
+    environment: dict,
     open_interest: float,
     open_interest_change: float,
     open_interest_history_available: bool,
@@ -110,6 +182,7 @@ def market_context(
     )
     volume_score, volume_ratio = _volume_structure(candles)
     macro_score = max(-1.0, min(1.0, float(macro.risk_score)))
+    market_score = _clip(_number(environment.get("score")))
     return {
         "orderbook_score": _clip(orderbook_score),
         "spread_bps": max(0.0, spread_bps),
@@ -122,12 +195,16 @@ def market_context(
         "volume_ratio": volume_ratio,
         "macro_score": macro_score,
         "macro_label": macro.label,
+        "market_environment_score": market_score,
+        "market_environment_label": str(environment.get("label", "过渡震荡")),
+        "market_environment_components": environment.get("components", {}),
         "available": {
             "orderbook": bool(bids and asks),
             "funding": bool(funding),
             "open_interest": open_interest > 0 and open_interest_history_available,
             "volume": len(candles) >= 20,
             "macro": bool(macro.components),
+            "market_environment": bool(environment.get("components")),
         },
     }
 
@@ -161,6 +238,26 @@ def _daily_change(ticker: dict, candles: list[Candle]) -> float:
     if len(candles) >= 2 and candles[-2].close > 0:
         return candles[-1].close / candles[-2].close - 1
     return 0.0
+
+
+def _btc_anchor(candles: list[Candle], ticker: dict) -> float:
+    closed = candles[:-1] if len(candles) > 1 else candles
+    if len(closed) < 90:
+        return 0.0
+    current = _number(ticker.get("last")) or closed[-1].close
+    momentum_30 = current / closed[-30].close - 1 if closed[-30].close > 0 else 0.0
+    momentum_90 = current / closed[-90].close - 1 if closed[-90].close > 0 else 0.0
+    return _clip(math.tanh(momentum_30 * 5) * 0.55 + math.tanh(momentum_90 * 3) * 0.45)
+
+
+def _median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2
 
 
 def _number(value: Any) -> float:

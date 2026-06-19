@@ -266,6 +266,16 @@ def _market_overview(forecasts: dict[str, dict]) -> dict:
 
     return {
         "asset_count": len(rows),
+        "market_environment": (
+            rows[0].get("market_context", {}).get("market_environment_label")
+            if rows
+            else None
+        ),
+        "market_environment_components": (
+            rows[0].get("market_context", {}).get("market_environment_components")
+            if rows
+            else {}
+        ),
         "bullish_count": sum(
             1 for item in rows if "买入" in str(item.get("decision", ""))
         ),

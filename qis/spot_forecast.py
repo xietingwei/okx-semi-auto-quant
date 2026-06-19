@@ -7,7 +7,7 @@ from statistics import mean, pstdev
 from qis.models import Candle
 
 
-FORECAST_MODEL_VERSION = "market_microstructure_macro_v6"
+FORECAST_MODEL_VERSION = "global_regime_context_v7"
 
 
 @dataclass(frozen=True)
@@ -107,8 +107,15 @@ class SpotForecastEngine:
         buy_zone_high = current + atr * 0.15
         invalidation = current - atr * 1.8
         positive = sum(1 for item in forecasts if item.expected_return > 0)
+        market_environment_score = float(
+            (market_context or {}).get("market_environment_score", 0.0)
+        )
         if positive >= 4 and forecasts[1].confidence >= 0.55:
-            decision = "分批关注买入"
+            decision = (
+                "逆势等待确认"
+                if market_environment_score <= -0.35
+                else "分批关注买入"
+            )
         elif positive <= 1:
             decision = "等待趋势企稳"
         else:
@@ -134,6 +141,7 @@ class SpotForecastEngine:
             "open_interest": self._factor_label((market_context or {}).get("open_interest_score", 0.0)),
             "volume_flow": self._factor_label((market_context or {}).get("volume_score", 0.0)),
             "macro": self._factor_label((market_context or {}).get("macro_score", 0.0)),
+            "market_environment": str((market_context or {}).get("market_environment_label", "过渡震荡")),
         }
         return SpotForecast(
             model_version=FORECAST_MODEL_VERSION,
@@ -287,16 +295,16 @@ class SpotForecastEngine:
     @staticmethod
     def _factor_adjustment(days: int, context: dict) -> tuple[float, float]:
         if days <= 7:
-            weights = (0.40, 0.15, 0.10, 0.25, 0.10)
+            weights = (0.30, 0.12, 0.08, 0.18, 0.08, 0.24)
             max_delta = 0.035
         elif days <= 30:
-            weights = (0.15, 0.20, 0.20, 0.25, 0.20)
+            weights = (0.12, 0.15, 0.15, 0.18, 0.15, 0.25)
             max_delta = 0.050
         elif days <= 90:
-            weights = (0.05, 0.20, 0.25, 0.25, 0.25)
+            weights = (0.04, 0.14, 0.20, 0.17, 0.18, 0.27)
             max_delta = 0.060
         else:
-            weights = (0.02, 0.18, 0.27, 0.18, 0.35)
+            weights = (0.02, 0.12, 0.20, 0.12, 0.24, 0.30)
             max_delta = 0.055
         values = (
             float(context.get("orderbook_score", 0.0)),
@@ -304,6 +312,7 @@ class SpotForecastEngine:
             float(context.get("open_interest_score", 0.0)),
             float(context.get("volume_score", 0.0)),
             float(context.get("macro_score", 0.0)),
+            float(context.get("market_environment_score", 0.0)),
         )
         score = sum(weight * max(-1.0, min(1.0, value)) for weight, value in zip(weights, values))
         return score, score * max_delta

@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from qis.macro import MacroRegime
-from qis.market_factors import market_context
+from qis.market_factors import global_market_environment, market_context
 from qis.models import Candle
 from qis.spot_forecast import SpotForecastEngine
 
@@ -31,6 +31,11 @@ def test_market_context_builds_directional_bounded_factors() -> None:
         ticker={"last": "140", "open24h": "135", "bidPx": "139.9", "askPx": "140.1"},
         candles=_candles(),
         macro=MacroRegime("risk_off", -0.6, {"vix_5d": 0.1}, "test"),
+        environment={
+            "score": 0.4,
+            "label": "风险扩张",
+            "components": {"up_breadth": 0.7},
+        },
         open_interest=1_100,
         open_interest_change=0.10,
         open_interest_history_available=True,
@@ -41,12 +46,14 @@ def test_market_context_builds_directional_bounded_factors() -> None:
     assert 0 < context["open_interest_score"] <= 1
     assert 0 < context["volume_score"] <= 1
     assert context["macro_score"] == -0.6
+    assert context["market_environment_score"] == 0.4
     assert all(-1 <= context[key] <= 1 for key in (
         "orderbook_score",
         "funding_score",
         "open_interest_score",
         "volume_score",
         "macro_score",
+        "market_environment_score",
     ))
 
 
@@ -61,3 +68,25 @@ def test_factor_weights_use_microstructure_short_and_macro_long() -> None:
 
     assert short_book_delta > long_book_delta
     assert long_macro_delta > short_macro_delta
+
+
+def test_global_environment_combines_breadth_btc_and_participation() -> None:
+    candles = _candles() * 3
+    rows = {
+        "BTC-USDT": candles,
+        "ETH-USDT": candles,
+        "SOL-USDT": candles,
+    }
+    tickers = {
+        inst_id: {
+            "last": str(values[-2].close * 1.08),
+            "open24h": str(values[-2].close),
+        }
+        for inst_id, values in rows.items()
+    }
+
+    environment = global_market_environment(tuple(rows), tickers, rows)
+
+    assert environment["label"] == "风险扩张"
+    assert 0.2 <= environment["score"] <= 1
+    assert environment["components"]["up_breadth"] == 1.0

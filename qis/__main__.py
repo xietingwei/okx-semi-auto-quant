@@ -17,7 +17,7 @@ from qis.doctor import run_doctor
 from qis.external_intel import ExternalIntelAnalyzer
 from qis.forecast_learning import apply_strategy_adjustments, hour_bucket
 from qis.macro import MacroAnalyzer
-from qis.market_factors import build_market_contexts
+from qis.market_factors import build_market_contexts, global_market_environment
 from qis.models import Mode
 from qis.okx import OkxClient, OkxError
 from qis.portal import render_portal
@@ -89,12 +89,18 @@ def _render_spot(settings, output: Path) -> None:
             elif candles:
                 candles_by_inst[inst_id] = candles
     macro = MacroAnalyzer().analyze()
+    environment = global_market_environment(
+        tuple(candles_by_inst),
+        ticker_map,
+        candles_by_inst,
+    )
     contexts = build_market_contexts(
         client,
         tuple(candles_by_inst),
         ticker_map,
         candles_by_inst,
         macro,
+        environment,
         Path("data/market_factors.json"),
     )
     for inst_id, candles in candles_by_inst.items():

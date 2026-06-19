@@ -59,6 +59,21 @@ def test_spot_forecast_marks_equity_mapping() -> None:
     assert forecast.market_type == "股票映射行情"
 
 
+def test_risk_contraction_blocks_normal_buy_decision() -> None:
+    forecast = SpotForecastEngine().analyze(
+        "BTC-USDT",
+        _daily_candles(),
+        live_price=140.0,
+        market_context={
+            "market_environment_score": -0.8,
+            "market_environment_label": "风险收缩",
+        },
+    )
+
+    assert forecast is not None
+    assert forecast.decision != "分批关注买入"
+
+
 def test_spot_forecast_uses_live_price_without_polluting_closed_history() -> None:
     quote_time = datetime(2026, 6, 18, 3, 20, tzinfo=timezone.utc)
     forecast = SpotForecastEngine().analyze(
