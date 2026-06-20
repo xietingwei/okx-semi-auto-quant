@@ -144,7 +144,7 @@ def load_settings() -> Settings:
             for item in os.environ.get("QIS_EMAIL_ALERT_RECIPIENTS", "").split(",")
             if item.strip()
         ),
-        email_alert_score_threshold=_int("QIS_EMAIL_ALERT_SCORE_THRESHOLD", 70),
+        email_alert_score_threshold=_int("QIS_EMAIL_ALERT_SCORE_THRESHOLD", 85),
         email_alert_cooldown_hours=_int("QIS_EMAIL_ALERT_COOLDOWN_HOURS", 12),
         email_smtp_host=os.environ.get("QIS_EMAIL_SMTP_HOST", "smtp.gmail.com"),
         email_smtp_port=_int("QIS_EMAIL_SMTP_PORT", 465),
