@@ -1,5 +1,7 @@
 # QIS — OKX Semi-Auto Quant
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Tests](https://img.shields.io/badge/tests-51%20passing-2ea44f)](#testing)
 [![Mode](https://img.shields.io/badge/default-paper%20trading-cba45f)](#safety-boundaries)
