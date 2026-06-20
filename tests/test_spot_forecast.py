@@ -166,4 +166,5 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert 'data-radar-strategy="breakout"' in html
     assert 'data-radar-strategy="mean_reversion"' in html
     assert "strategyView(x,selectedRadarStrategy)" in html
+    assert "<small>${x.strategy?.name||strategyNames[selectedRadarStrategy]}</small>" not in html
     assert "/api/assistant/stream" in html
