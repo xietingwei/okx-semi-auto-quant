@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/push_to_github.py\"",
+            "timeout": 60,
+            "statusMessage": "正在将已提交变更同步到 GitHub"
+          }
+        ]
+      }
+    ]
+  }
+}
