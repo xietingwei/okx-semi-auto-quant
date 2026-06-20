@@ -161,4 +161,9 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert ".message.assistant{" not in html
     assert 'data-frame="1H"' in html
     assert 'data-scope="global"' in html
+    assert 'data-radar-strategy="adaptive"' in html
+    assert 'data-radar-strategy="trend"' in html
+    assert 'data-radar-strategy="breakout"' in html
+    assert 'data-radar-strategy="mean_reversion"' in html
+    assert "strategyView(x,selectedRadarStrategy)" in html
     assert "/api/assistant/stream" in html
