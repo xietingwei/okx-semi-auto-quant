@@ -85,6 +85,16 @@ def apply_strategy_adjustments(forecast: dict, adjustments: dict[str, dict]) -> 
         result["opportunity_score"],
         float(result.get("market_context", {}).get("market_environment_score", 0.0)),
     )
+    strategy_id = result.get("strategy", {}).get("id", "adaptive")
+    validated = any(
+        bool(item.get("learning", {}).get("active"))
+        for item in result["forecasts"]
+    )
+    if strategy_id != "adaptive" and not validated:
+        result["decision"] = "模拟观察"
+        result["strategy_validation"] = "冷启动待验证"
+    else:
+        result["strategy_validation"] = "历史样本校准"
     result["learning_updated_at"] = hour_bucket().isoformat()
     return result
 

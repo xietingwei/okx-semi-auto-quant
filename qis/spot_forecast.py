@@ -9,6 +9,41 @@ from qis.models import Candle
 
 FORECAST_MODEL_VERSION = "global_regime_context_v7"
 
+STRATEGY_CATALOG = (
+    {
+        "id": "adaptive",
+        "name": "综合自适应",
+        "focus": "全周期平衡",
+        "direction": "顺势为主，兼顾拥挤与大环境",
+        "best_for": "方向尚未完全统一、需要综合判断的行情",
+        "risk": "极端事件下各类因子可能同时失效",
+    },
+    {
+        "id": "trend",
+        "name": "趋势跟随",
+        "focus": "1月–6月",
+        "direction": "沿30/90日主趋势持有",
+        "best_for": "单边趋势和回撤后续涨",
+        "risk": "震荡市容易反复止损",
+    },
+    {
+        "id": "breakout",
+        "name": "突破确认",
+        "focus": "1天–1月",
+        "direction": "跟随放量突破与盘口确认",
+        "best_for": "动量启动、量价和持仓同步扩张",
+        "risk": "假突破和流动性骤降",
+    },
+    {
+        "id": "mean_reversion",
+        "name": "均值回归",
+        "focus": "1天–1月",
+        "direction": "逆向交易过度偏离",
+        "best_for": "震荡市、急涨急跌后的修复",
+        "risk": "单边趋势中逆势抄底或摸顶",
+    },
+)
+
 
 @dataclass(frozen=True)
 class HorizonForecast:
@@ -63,6 +98,7 @@ class SpotForecastEngine:
         live_price: float | None = None,
         quote_time: datetime | None = None,
         market_context: dict | None = None,
+        strategy_id: str = "adaptive",
     ) -> SpotForecast | None:
         closed = candles[:-1] if len(candles) > 1 else candles
         if len(closed) < 90:
@@ -100,6 +136,7 @@ class SpotForecastEngine:
                 momentum_30,
                 momentum_90,
                 market_context or {},
+                strategy_id,
             )
             for key, label, days in self.HORIZONS
         ]
@@ -163,6 +200,46 @@ class SpotForecastEngine:
             market_context=market_context or {},
         )
 
+    def analyze_suite(
+        self,
+        inst_id: str,
+        candles: list[Candle],
+        live_price: float | None = None,
+        quote_time: datetime | None = None,
+        market_context: dict | None = None,
+    ) -> list[dict]:
+        from dataclasses import asdict
+
+        rows = []
+        for profile in STRATEGY_CATALOG:
+            forecast = self.analyze(
+                inst_id,
+                candles,
+                live_price=live_price,
+                quote_time=quote_time,
+                market_context=market_context,
+                strategy_id=str(profile["id"]),
+            )
+            if forecast is None:
+                continue
+            row = asdict(forecast)
+            rows.append({
+                "strategy": profile,
+                "model_version": (
+                    FORECAST_MODEL_VERSION
+                    if profile["id"] == "adaptive"
+                    else f"{FORECAST_MODEL_VERSION}:{profile['id']}"
+                ),
+                "inst_id": row["inst_id"],
+                "current_price": row["current_price"],
+                "volatility": row["volatility"],
+                "market_context": row["market_context"],
+                "forecasts": row["forecasts"],
+                "opportunity_score": row["opportunity_score"],
+                "decision": row["decision"],
+            })
+        return rows
+
     def _forecast(
         self,
         key: str,
@@ -176,6 +253,7 @@ class SpotForecastEngine:
         momentum_30: float,
         momentum_90: float,
         market_context: dict,
+        strategy_id: str,
     ) -> HorizonForecast:
         horizon_years = days / 365
         short_weight = max(0.15, 1 - days / 210)
@@ -185,20 +263,43 @@ class SpotForecastEngine:
             self._clip(annual_trend * horizon_years, -0.55, 0.75)
         ) - 1
         mean_reversion_penalty = -0.18 * momentum if abs(momentum) > volatility * math.sqrt(max(days, 1)) * 1.8 else 0.0
-        trend_weight, momentum_weight = self._horizon_weights(days)
+        trend_weight, momentum_weight = self._strategy_weights(strategy_id, days)
         if annual_trend * momentum < 0:
             # Historical evaluation shows weak 1w/1m direction. When trend and
             # momentum disagree, do not let short-lived momentum dictate targets.
             momentum_weight *= 0.45
             trend_weight = 1 - momentum_weight
-        base_expected_return = (
-            trend_return * trend_weight
-            + momentum * momentum_weight
-            + mean_reversion_penalty
-        )
+        if strategy_id == "mean_reversion":
+            reversion_strength = min(
+                0.72,
+                0.28 + abs(momentum) / max(volatility * math.sqrt(max(days, 1)), 0.01) * 0.08,
+            )
+            horizon_decay = 1.0 if days <= 30 else 0.45
+            base_expected_return = (
+                trend_return * 0.24
+                - momentum * reversion_strength * horizon_decay
+            )
+        else:
+            base_expected_return = (
+                trend_return * trend_weight
+                + momentum * momentum_weight
+                + mean_reversion_penalty
+            )
         factor_score, factor_delta = self._factor_adjustment(days, market_context)
-        raw_expected_return = base_expected_return + factor_delta
-        expected_return = self._soft_bound(raw_expected_return, 0.35, 0.45)
+        factor_multiplier = {
+            "adaptive": 1.0,
+            "trend": 0.70,
+            "breakout": 1.25,
+            "mean_reversion": 0.35,
+        }.get(strategy_id, 1.0)
+        raw_expected_return = base_expected_return + factor_delta * factor_multiplier
+        positive_limit = 0.38 if strategy_id == "mean_reversion" else 0.45
+        negative_limit = 0.30 if strategy_id == "mean_reversion" else 0.35
+        expected_return = self._soft_bound(
+            raw_expected_return,
+            negative_limit,
+            positive_limit,
+        )
         sigma = volatility * math.sqrt(days)
         agreement = self._agreement(annual_trend, momentum)
         signal_to_noise = abs(expected_return) / max(sigma, 0.01)
@@ -222,6 +323,8 @@ class SpotForecastEngine:
             0.32,
             0.82,
         )
+        if strategy_id == "mean_reversion" and days > 30:
+            confidence = max(0.32, confidence - 0.12)
         z_score = expected_return / max(sigma, 0.01)
         up_probability = self._clip(1 / (1 + math.exp(-z_score * 1.15)), 0.12, 0.88)
         target = current * (1 + expected_return)
@@ -280,6 +383,14 @@ class SpotForecastEngine:
         if days <= 90:
             return 0.66, 0.34
         return 0.72, 0.28
+
+    @staticmethod
+    def _strategy_weights(strategy_id: str, days: int) -> tuple[float, float]:
+        if strategy_id == "trend":
+            return (0.88, 0.12) if days >= 30 else (0.80, 0.20)
+        if strategy_id == "breakout":
+            return (0.42, 0.58) if days <= 30 else (0.58, 0.42)
+        return SpotForecastEngine._horizon_weights(days)
 
     @staticmethod
     def _soft_bound(value: float, negative_limit: float, positive_limit: float) -> float:

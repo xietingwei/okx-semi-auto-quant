@@ -73,6 +73,7 @@ def _render_spot(settings, output: Path) -> None:
     engine = SpotForecastEngine()
     storage = Storage(settings.db_path)
     forecasts = []
+    strategy_suites = {}
     inst_ids = _discover_spot_ids(client, settings)
     ticker_map = _ticker_map(client)
     candles_by_inst = {}
@@ -114,15 +115,26 @@ def _render_spot(settings, output: Path) -> None:
             )
         except (TypeError, ValueError):
             live_price, quote_time = None, None
-        forecast = engine.analyze(
+        suite = engine.analyze_suite(
             inst_id,
             candles,
             live_price=live_price,
             quote_time=quote_time,
             market_context=contexts.get(inst_id),
         )
+        if suite:
+            forecast = engine.analyze(
+                inst_id,
+                candles,
+                live_price=live_price,
+                quote_time=quote_time,
+                market_context=contexts.get(inst_id),
+            )
+        else:
+            forecast = None
         if forecast:
             forecasts.append(forecast)
+            strategy_suites[inst_id] = suite
             if not storage.has_forecast_history(inst_id):
                 _backfill_forecast_history(storage, engine, inst_id, candles)
     if not forecasts:
@@ -141,7 +153,23 @@ def _render_spot(settings, output: Path) -> None:
     predicted_at = hour_bucket(observed_at)
     calibrated_forecasts = []
     for forecast in forecasts:
-        calibrated = apply_strategy_adjustments(asdict(forecast), adjustments)
+        raw = asdict(forecast)
+        calibrated = apply_strategy_adjustments(raw, adjustments)
+        calibrated_variants = []
+        for variant in strategy_suites.get(forecast.inst_id, []):
+            variant_adjustments = storage.forecast_strategy_adjustments(
+                model_version=str(variant["model_version"]),
+            )
+            calibrated_variant = apply_strategy_adjustments(
+                variant,
+                variant_adjustments,
+            )
+            calibrated_variants.append(calibrated_variant)
+            storage.record_forecast_snapshot(
+                calibrated_variant,
+                predicted_at=predicted_at,
+            )
+        calibrated["strategy_variants"] = calibrated_variants
         calibrated_forecasts.append(calibrated)
         storage.record_forecast_snapshot(calibrated, predicted_at=predicted_at)
     storage.record_forecast_learning_run(

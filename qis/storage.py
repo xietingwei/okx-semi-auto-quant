@@ -686,7 +686,11 @@ class Storage:
             "detail": "当前到期预测的方向、收益误差、概率与区间覆盖未发现明显异常。",
         }]
 
-    def forecast_strategy_adjustments(self, minimum_samples: int = 30) -> dict[str, dict]:
+    def forecast_strategy_adjustments(
+        self,
+        minimum_samples: int = 30,
+        model_version: str = FORECAST_MODEL_VERSION,
+    ) -> dict[str, dict]:
         self.init()
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
@@ -697,7 +701,7 @@ class Storage:
                     WHERE actual_price IS NOT NULL AND model_version = ?
                     ORDER BY evaluated_at DESC LIMIT 5000
                     """,
-                    (FORECAST_MODEL_VERSION,),
+                    (model_version,),
                 )
             )
         result: dict[str, dict] = {}

@@ -165,11 +165,23 @@ def build_decision_context(
     advice: list[dict],
     analysis_scope: str = "asset",
     learning_run: dict | None = None,
+    selected_strategy: str = "adaptive",
 ) -> tuple[dict, list[dict]]:
     global_scope = analysis_scope == "global"
     selected = None if global_scope else forecasts.get(selected_inst_id or "")
     if selected is None and forecasts and not global_scope:
         selected = next(iter(forecasts.values()))
+    if selected and selected_strategy != "adaptive":
+        variant = next(
+            (
+                item
+                for item in selected.get("strategy_variants", [])
+                if item.get("strategy", {}).get("id") == selected_strategy
+            ),
+            None,
+        )
+        if variant:
+            selected = {**selected, **variant}
     horizon_rows = selected.get("forecasts", []) if selected else []
     horizon = None
     if selected:

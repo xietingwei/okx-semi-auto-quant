@@ -124,3 +124,30 @@ def test_unvalidated_model_uses_conservative_cold_start_prior() -> None:
     assert item["up_probability"] == pytest.approx(0.596)
     assert item["learning"]["active"] is False
     assert item["learning"]["calibration_method"] == "cold_start_conservative_prior"
+
+
+def test_new_strategy_variant_does_not_borrow_adaptive_calibration() -> None:
+    variant = {
+        "strategy": {"id": "trend"},
+        "current_price": 100.0,
+        "volatility": 0.02,
+        "market_context": {},
+        "forecasts": [{
+            "key": "1m",
+            "target": 120.0,
+            "low": 80.0,
+            "high": 140.0,
+            "expected_return": 0.20,
+            "up_probability": 0.70,
+            "confidence": 0.65,
+            "signal": "偏多",
+        }],
+    }
+
+    result = apply_strategy_adjustments(variant, {})
+    item = result["forecasts"][0]
+
+    assert item["expected_return"] == pytest.approx(0.13)
+    assert item["learning"]["calibration_method"] == "cold_start_conservative_prior"
+    assert result["decision"] == "模拟观察"
+    assert result["strategy_validation"] == "冷启动待验证"

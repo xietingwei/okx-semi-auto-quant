@@ -214,6 +214,7 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                     advice=advice,
                     analysis_scope=str(payload.get("scope") or "asset"),
                     learning_run=learning_run,
+                    selected_strategy=str(payload.get("strategy_id") or "adaptive"),
                 )
                 history = (
                     payload.get("history")
@@ -302,13 +303,22 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
         forecasts = self._forecasts()
         quotes = self.quote_service.quotes()
         adjustments = self.storage.forecast_strategy_adjustments()
-        return {
-            inst_id: apply_strategy_adjustments(
-                _rebase_forecast(forecast, quotes.get(inst_id)),
-                adjustments,
-            )
-            for inst_id, forecast in forecasts.items()
-        }
+        result = {}
+        for inst_id, forecast in forecasts.items():
+            rebased = _rebase_forecast(forecast, quotes.get(inst_id))
+            variants = rebased.pop("strategy_variants", [])
+            calibrated = apply_strategy_adjustments(rebased, adjustments)
+            calibrated["strategy_variants"] = [
+                apply_strategy_adjustments(
+                    variant,
+                    self.storage.forecast_strategy_adjustments(
+                        model_version=str(variant["model_version"]),
+                    ),
+                )
+                for variant in variants
+            ]
+            result[inst_id] = calibrated
+        return result
 
 
 def serve(host: str, port: int, data_dir: Path, db_path: Path) -> None:
@@ -397,7 +407,8 @@ def _rebase_forecast(forecast: dict, quote: dict | None) -> dict:
                 volume=0.0,
             )
         )
-        refreshed = SpotForecastEngine().analyze(
+        engine = SpotForecastEngine()
+        refreshed = engine.analyze(
             str(forecast["inst_id"]),
             candles,
             live_price=live_price,
@@ -408,6 +419,13 @@ def _rebase_forecast(forecast: dict, quote: dict | None) -> dict:
             from dataclasses import asdict
 
             result = asdict(refreshed)
+            result["strategy_variants"] = engine.analyze_suite(
+                str(forecast["inst_id"]),
+                candles,
+                live_price=live_price,
+                quote_time=quote_time,
+                market_context=forecast.get("market_context") or {},
+            )
             result["forecast_base_price"] = live_price
             result["quote_source"] = "OKX ticker · 实时特征重算"
             return result

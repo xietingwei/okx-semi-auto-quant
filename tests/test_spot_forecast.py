@@ -5,7 +5,7 @@ import pytest
 
 from qis.models import Candle
 from qis.spot_dashboard import render_spot_dashboard_cache
-from qis.spot_forecast import SpotForecastEngine, decide_strategy
+from qis.spot_forecast import STRATEGY_CATALOG, SpotForecastEngine, decide_strategy
 
 
 def _daily_candles(count: int = 320) -> list[Candle]:
@@ -89,6 +89,34 @@ def test_strategy_never_recommends_buy_below_70_score() -> None:
     assert decide_strategy(forecasts, 50, 0.2) == "中性观察"
     assert decide_strategy(forecasts, 69, 0.2) == "观察等待触发"
     assert decide_strategy(forecasts, 70, 0.2) == "分批关注买入"
+
+
+def test_strategy_suite_has_distinct_models_and_documented_focus() -> None:
+    suite = SpotForecastEngine().analyze_suite(
+        "BTC-USDT",
+        _daily_candles(),
+        live_price=150.0,
+        market_context={
+            "orderbook_score": 0.5,
+            "volume_score": 0.7,
+            "market_environment_score": 0.2,
+        },
+    )
+
+    assert [item["strategy"]["id"] for item in suite] == [
+        item["id"] for item in STRATEGY_CATALOG
+    ]
+    assert all(item["strategy"]["direction"] for item in suite)
+    one_month_returns = {
+        round(
+            next(
+                row for row in item["forecasts"] if row["key"] == "1m"
+            )["expected_return"],
+            8,
+        )
+        for item in suite
+    }
+    assert len(one_month_returns) >= 3
 
 
 def test_spot_forecast_uses_live_price_without_polluting_closed_history() -> None:
