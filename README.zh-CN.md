@@ -188,6 +188,25 @@ LLM_TIMEOUT_SECONDS=45
 
 如果大模型不可用，行情预测、历史评估和风险管理功能仍可正常运行。
 
+### 机会分邮件提醒
+
+当任一策略的机会分达到配置阈值时，QIS 可以发送一封聚合提醒邮件。系统按“标的 + 策略”去重，并设置可配置的冷却时间，避免每轮刷新重复通知。Gmail 必须使用应用专用密码。
+
+```ini
+QIS_EMAIL_ALERT_ENABLED=1
+QIS_EMAIL_ALERT_RECIPIENTS=xietingwei.731@gmail.com
+QIS_EMAIL_ALERT_SCORE_THRESHOLD=70
+QIS_EMAIL_ALERT_COOLDOWN_HOURS=12
+QIS_EMAIL_SMTP_HOST=smtp.gmail.com
+QIS_EMAIL_SMTP_PORT=465
+QIS_EMAIL_SMTP_USERNAME=你的Gmail账号
+QIS_EMAIL_SMTP_PASSWORD=你的应用专用密码
+QIS_EMAIL_SMTP_FROM=你的Gmail账号
+QIS_EMAIL_SMTP_USE_SSL=1
+```
+
+邮件凭证只应保存在 `.env` 中。邮件发送失败不会中断预测生成或看盘页面刷新。
+
 ## 命令行
 
 ```bash

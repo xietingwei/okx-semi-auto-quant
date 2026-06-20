@@ -14,6 +14,7 @@ from qis.config import load_settings
 from qis.dashboard import render_dashboard
 from qis.deepseek_intel import DeepSeekIntelProvider, DeepSeekSettings
 from qis.doctor import run_doctor
+from qis.email_alerts import notify_opportunities
 from qis.external_intel import ExternalIntelAnalyzer
 from qis.forecast_learning import apply_strategy_adjustments, hour_bucket
 from qis.macro import MacroAnalyzer
@@ -181,6 +182,12 @@ def _render_spot(settings, output: Path) -> None:
     )
     path = render_spot_dashboard(calibrated_forecasts, output)
     print(f"Spot dashboard written to {path.resolve()} ({len(forecasts)} assets)", flush=True)
+    try:
+        notified = notify_opportunities(calibrated_forecasts, settings)
+        if notified:
+            print(f"Email opportunity alert sent ({notified} candidates)", flush=True)
+    except Exception as exc:
+        print(f"Email opportunity alert failed: {exc}", flush=True)
 
 
 def _ticker_map(client: OkxClient) -> dict[str, dict]:

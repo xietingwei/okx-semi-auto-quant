@@ -209,6 +209,28 @@ LLM_TIMEOUT_SECONDS=45
 If the LLM is unavailable, forecasting, evaluation, and risk functions continue
 to operate normally.
 
+### Opportunity Email Alerts
+
+QIS can send one aggregated email when a strategy's opportunity score reaches
+the configured threshold. Alerts are deduplicated by instrument and strategy,
+with a configurable cooldown. Gmail accounts must use an app password.
+
+```ini
+QIS_EMAIL_ALERT_ENABLED=1
+QIS_EMAIL_ALERT_RECIPIENTS=xietingwei.731@gmail.com
+QIS_EMAIL_ALERT_SCORE_THRESHOLD=70
+QIS_EMAIL_ALERT_COOLDOWN_HOURS=12
+QIS_EMAIL_SMTP_HOST=smtp.gmail.com
+QIS_EMAIL_SMTP_PORT=465
+QIS_EMAIL_SMTP_USERNAME=your-account@gmail.com
+QIS_EMAIL_SMTP_PASSWORD=your-app-password
+QIS_EMAIL_SMTP_FROM=your-account@gmail.com
+QIS_EMAIL_SMTP_USE_SSL=1
+```
+
+Keep email credentials only in `.env`. A failed notification never interrupts
+forecast generation or dashboard refresh.
+
 ## CLI
 
 ```bash

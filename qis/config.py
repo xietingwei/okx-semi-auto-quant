@@ -63,6 +63,16 @@ class Settings:
     deepseek_model: str
     deepseek_timeout_seconds: int
     deepseek_cache_ttl_seconds: int
+    email_alert_enabled: bool
+    email_alert_recipients: tuple[str, ...]
+    email_alert_score_threshold: int
+    email_alert_cooldown_hours: int
+    email_smtp_host: str
+    email_smtp_port: int
+    email_smtp_username: str
+    email_smtp_password: str
+    email_smtp_from: str
+    email_smtp_use_ssl: bool
 
 
 def load_settings() -> Settings:
@@ -128,4 +138,18 @@ def load_settings() -> Settings:
         deepseek_model=os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash"),
         deepseek_timeout_seconds=_int("DEEPSEEK_TIMEOUT_SECONDS", 45),
         deepseek_cache_ttl_seconds=_int("DEEPSEEK_CACHE_TTL_SECONDS", 1800),
+        email_alert_enabled=os.environ.get("QIS_EMAIL_ALERT_ENABLED", "0") == "1",
+        email_alert_recipients=tuple(
+            item.strip()
+            for item in os.environ.get("QIS_EMAIL_ALERT_RECIPIENTS", "").split(",")
+            if item.strip()
+        ),
+        email_alert_score_threshold=_int("QIS_EMAIL_ALERT_SCORE_THRESHOLD", 70),
+        email_alert_cooldown_hours=_int("QIS_EMAIL_ALERT_COOLDOWN_HOURS", 12),
+        email_smtp_host=os.environ.get("QIS_EMAIL_SMTP_HOST", "smtp.gmail.com"),
+        email_smtp_port=_int("QIS_EMAIL_SMTP_PORT", 465),
+        email_smtp_username=os.environ.get("QIS_EMAIL_SMTP_USERNAME", ""),
+        email_smtp_password=os.environ.get("QIS_EMAIL_SMTP_PASSWORD", ""),
+        email_smtp_from=os.environ.get("QIS_EMAIL_SMTP_FROM", ""),
+        email_smtp_use_ssl=os.environ.get("QIS_EMAIL_SMTP_USE_SSL", "1") == "1",
     )
