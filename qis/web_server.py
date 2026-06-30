@@ -190,7 +190,10 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                     200 if success else 404,
                 )
                 return
-            if path in {"/api/assistant/ask", "/api/assistant/stream"}:
+            if path == "/api/assistant/stream":
+                self._assistant_stream_request(payload)
+                return
+            if path == "/api/assistant/ask":
                 forecasts = self._live_forecasts()
                 positions = [dict(row) for row in self.storage.spot_positions()]
                 analyses = [
@@ -222,17 +225,14 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                     else []
                 )
                 question = str(payload.get("question") or "")
-                if path == "/api/assistant/stream":
-                    self._assistant_stream(question, context, history, references)
-                else:
-                    answer = self.assistant.ask(question, context, history)
-                    self._json(
-                        {
-                            "answer": answer,
-                            "references": references,
-                            **self.assistant.status(),
-                        }
-                    )
+                answer = self.assistant.ask(question, context, history)
+                self._json(
+                    {
+                        "answer": answer,
+                        "references": references,
+                        **self.assistant.status(),
+                    }
+                )
                 return
             self._json({"ok": False, "error": "not found"}, 404)
         except (KeyError, TypeError, ValueError) as exc:
@@ -278,6 +278,51 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
         self._stream_event({"type": "padding", "content": " " * 2048})
         try:
             for content in self.assistant.ask_stream(question, context, history):
+                self._stream_event({"type": "delta", "content": content})
+            self._stream_event({"type": "done"})
+        except (ValueError, DecisionAssistantError) as exc:
+            self._stream_event({"type": "error", "error": str(exc)})
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+    def _assistant_stream_request(self, payload: dict) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, no-transform")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        try:
+            self._stream_event({"type": "start", "references": [], **self.assistant.status()})
+            self._stream_event({"type": "padding", "content": " " * 2048})
+            forecasts = self._live_forecasts()
+            positions = [dict(row) for row in self.storage.spot_positions()]
+            analyses = [
+                analyze_position(position, forecasts[position["inst_id"]])
+                for position in positions
+                if position["sell_time"] is None
+                and position["inst_id"] in forecasts
+            ]
+            context, references = build_decision_context(
+                forecasts=forecasts,
+                selected_inst_id=str(payload.get("inst_id") or ""),
+                selected_horizon=str(payload.get("horizon") or ""),
+                positions=positions,
+                analyses=analyses,
+                evaluation=self.storage.forecast_evaluation(),
+                adjustments=self.storage.forecast_strategy_adjustments(),
+                advice=self.storage.forecast_advice(),
+                analysis_scope=str(payload.get("scope") or "asset"),
+                learning_run=self.storage.latest_forecast_learning_run(),
+                selected_strategy=str(payload.get("strategy_id") or "adaptive"),
+            )
+            history = (
+                payload.get("history")
+                if isinstance(payload.get("history"), list)
+                else []
+            )
+            self._stream_event({"type": "start", "references": references, **self.assistant.status()})
+            for content in self.assistant.ask_stream(str(payload.get("question") or ""), context, history):
                 self._stream_event({"type": "delta", "content": content})
             self._stream_event({"type": "done"})
         except (ValueError, DecisionAssistantError) as exc:
