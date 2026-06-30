@@ -169,3 +169,6 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert "strategyView(x,selectedRadarStrategy)" in html
     assert "<small>${x.strategy?.name||strategyNames[selectedRadarStrategy]}</small>" not in html
     assert "/api/assistant/stream" in html
+    assert "/api/spot/delete" in html
+    assert "deletePosition" in html
+    assert "deleteConfirm" in html

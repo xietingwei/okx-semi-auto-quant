@@ -58,6 +58,25 @@ def test_spot_position_close_updates_reliability(tmp_path: Path) -> None:
     assert stats["by_horizon"]["1w"]["direction_accuracy"] == 1.0
 
 
+def test_spot_position_can_be_deleted(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "qis.sqlite3")
+    position_id = storage.open_spot_position(
+        inst_id="ETH-USDT",
+        buy_price=100.0,
+        quantity=1.5,
+        horizon="1m",
+        forecast_return=0.08,
+        up_probability=0.62,
+        confidence=0.7,
+        target_price=108.0,
+        notes="delete me",
+    )
+
+    assert storage.delete_spot_position(position_id)
+    assert not storage.delete_spot_position(position_id)
+    assert [dict(row) for row in storage.spot_positions()] == []
+
+
 def test_forecast_advice_uses_predictions_not_manual_trades(tmp_path: Path) -> None:
     storage = Storage(tmp_path / "qis.sqlite3")
     predicted_at = datetime(2026, 1, 1, tzinfo=timezone.utc)

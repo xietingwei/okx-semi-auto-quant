@@ -186,6 +186,13 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                     200 if success else 404,
                 )
                 return
+            if path == "/api/spot/delete":
+                success = self.storage.delete_spot_position(int(payload["id"]))
+                self._json(
+                    {"ok": success, "error": None if success else "position not found"},
+                    200 if success else 404,
+                )
+                return
             if path == "/api/assistant/stream":
                 self._assistant_stream_request(payload)
                 return

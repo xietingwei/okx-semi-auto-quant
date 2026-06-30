@@ -1,0 +1,73 @@
+# QIS project structure
+
+This repository is intentionally kept as a small Python package plus local runtime
+scripts. Avoid large directory moves unless there is a clear migration plan,
+because the launch scripts and generated dashboard paths are deliberately simple.
+
+## Top-level layout
+
+| Path | Purpose | Notes |
+| --- | --- | --- |
+| `qis/` | Application package | Forecasting, storage, web API, UI template, risk logic, assistant context. |
+| `tests/` | Pytest test suite | Add regression tests for every source behavior change. |
+| `scripts/` | Operator scripts | `start.sh`, `stop.sh`, and `status.sh` manage local background processes. |
+| `docs/` | Maintainer and agent handoff docs | Keep durable project knowledge here instead of burying it in chat history. |
+| `data/` | Runtime state and generated dashboards | Do not edit or commit generated HTML, logs, SQLite, PID files, or cache files. |
+| `.codex/` | Local Codex hooks | Existing automation; avoid changing without checking the hook behavior. |
+| `.githooks/` | Git hooks | Pre-commit runs tests; keep it fast and deterministic. |
+
+## Important source files
+
+| File | Responsibility |
+| --- | --- |
+| `qis/__main__.py` | CLI entrypoint for analyze, web, spot-watch, doctor, and related commands. |
+| `qis/web_server.py` | Local HTTP API and static dashboard server. Spot buy/sell/delete endpoints live here. |
+| `qis/spot_dashboard.py` | Source template for `data/index.html`; edit this file, not generated HTML. |
+| `qis/storage.py` | SQLite schema and persistence helpers for positions, manual trades, forecast evaluations, and learning runs. |
+| `qis/spot_forecast.py` | Spot forecast model, strategy variants, opportunity scoring, and model versioning. |
+| `qis/position_risk.py` | Holding-level sentinel analysis: stops, target distance, risk score, and sell timing. |
+| `qis/decision_assistant.py` | OpenAI-compatible LLM request/streaming and decision-context construction. |
+| `qis/forecast_learning.py` | Walk-forward calibration and adjustment application. |
+| `qis/okx.py` | OKX REST client wrappers. |
+| `qis/config.py` | Environment-backed runtime settings. |
+
+## Runtime flow
+
+```text
+scripts/start.sh
+  ├─ python3 -m qis spot-watch
+  │    ├─ fetches OKX/public market data
+  │    ├─ writes data/spot_forecasts.json
+  │    └─ renders data/index.html from qis/spot_dashboard.py
+  ├─ python3 -m qis web
+  │    ├─ serves http://127.0.0.1:8787/
+  │    ├─ exposes /api/spot/positions, /buy, /sell, /delete
+  │    └─ streams /api/assistant/stream
+  └─ python3 -m qis doctor
+```
+
+## Editing guidelines
+
+- Treat `qis/spot_dashboard.py` as the canonical frontend source.
+- Runtime files under `data/` can be used for verification, but source changes
+  should not be made there.
+- Keep API changes small and covered by tests in `tests/`.
+- Preserve paper/manual-only behavior; do not add automatic order execution to
+  the dashboard.
+- Before finishing source or doc changes, run:
+
+```bash
+git diff --check
+python3 -m pytest -q
+git status --short
+```
+
+## Local operations
+
+```bash
+bash scripts/start.sh
+bash scripts/status.sh
+bash scripts/stop.sh
+```
+
+The web app is expected at `http://127.0.0.1:8787/`.

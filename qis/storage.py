@@ -384,6 +384,15 @@ class Storage:
             )
         return True
 
+    def delete_spot_position(self, position_id: int) -> bool:
+        self.init()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM spot_positions WHERE id = ?",
+                (position_id,),
+            )
+            return cursor.rowcount > 0
+
     def spot_positions(self, limit: int = 100) -> list[sqlite3.Row]:
         self.init()
         with self._connect() as conn:
