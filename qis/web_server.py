@@ -86,12 +86,8 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/spot/positions":
             positions = [dict(row) for row in self.storage.spot_positions()]
-            forecasts = self._live_forecasts()
-            analyses = [
-                analyze_position(position, forecasts[position["inst_id"]])
-                for position in positions
-                if position["sell_time"] is None and position["inst_id"] in forecasts
-            ]
+            forecasts = self._position_forecasts(positions)
+            analyses = self._position_analyses(positions, forecasts)
             self._json(
                 {
                     "positions": positions,
@@ -194,31 +190,7 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                 self._assistant_stream_request(payload)
                 return
             if path == "/api/assistant/ask":
-                forecasts = self._live_forecasts()
-                positions = [dict(row) for row in self.storage.spot_positions()]
-                analyses = [
-                    analyze_position(position, forecasts[position["inst_id"]])
-                    for position in positions
-                    if position["sell_time"] is None
-                    and position["inst_id"] in forecasts
-                ]
-                evaluation = self.storage.forecast_evaluation()
-                adjustments = self.storage.forecast_strategy_adjustments()
-                advice = self.storage.forecast_advice()
-                learning_run = self.storage.latest_forecast_learning_run()
-                context, references = build_decision_context(
-                    forecasts=forecasts,
-                    selected_inst_id=str(payload.get("inst_id") or ""),
-                    selected_horizon=str(payload.get("horizon") or ""),
-                    positions=positions,
-                    analyses=analyses,
-                    evaluation=evaluation,
-                    adjustments=adjustments,
-                    advice=advice,
-                    analysis_scope=str(payload.get("scope") or "asset"),
-                    learning_run=learning_run,
-                    selected_strategy=str(payload.get("strategy_id") or "adaptive"),
-                )
+                context, references = self._assistant_context(payload)
                 history = (
                     payload.get("history")
                     if isinstance(payload.get("history"), list)
@@ -295,27 +267,7 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
         try:
             self._stream_event({"type": "start", "references": [], **self.assistant.status()})
             self._stream_event({"type": "padding", "content": " " * 2048})
-            forecasts = self._live_forecasts()
-            positions = [dict(row) for row in self.storage.spot_positions()]
-            analyses = [
-                analyze_position(position, forecasts[position["inst_id"]])
-                for position in positions
-                if position["sell_time"] is None
-                and position["inst_id"] in forecasts
-            ]
-            context, references = build_decision_context(
-                forecasts=forecasts,
-                selected_inst_id=str(payload.get("inst_id") or ""),
-                selected_horizon=str(payload.get("horizon") or ""),
-                positions=positions,
-                analyses=analyses,
-                evaluation=self.storage.forecast_evaluation(),
-                adjustments=self.storage.forecast_strategy_adjustments(),
-                advice=self.storage.forecast_advice(),
-                analysis_scope=str(payload.get("scope") or "asset"),
-                learning_run=self.storage.latest_forecast_learning_run(),
-                selected_strategy=str(payload.get("strategy_id") or "adaptive"),
-            )
+            context, references = self._assistant_context(payload)
             history = (
                 payload.get("history")
                 if isinstance(payload.get("history"), list)
@@ -344,26 +296,112 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
         rows = json.loads(path.read_text(encoding="utf-8"))
         return {str(item["inst_id"]): item for item in rows}
 
-    def _live_forecasts(self) -> dict[str, dict]:
+    def _position_forecasts(self, positions: list[dict]) -> dict[str, dict]:
+        inst_ids = {
+            str(position["inst_id"])
+            for position in positions
+            if position.get("sell_time") is None
+        }
+        return self._live_forecasts(inst_ids)
+
+    def _position_analyses(
+        self,
+        positions: list[dict],
+        forecasts: dict[str, dict],
+    ) -> list[dict]:
+        return [
+            analyze_position(position, forecasts[str(position["inst_id"])])
+            for position in positions
+            if position.get("sell_time") is None
+            and str(position["inst_id"]) in forecasts
+        ]
+
+    def _assistant_context(self, payload: dict) -> tuple[dict, list[dict]]:
+        positions = [dict(row) for row in self.storage.spot_positions()]
+        scope = str(payload.get("scope") or "asset")
+        selected_inst_id = str(payload.get("inst_id") or "")
+        if scope == "global":
+            forecasts = self._live_forecasts()
+        else:
+            inst_ids = {
+                str(position["inst_id"])
+                for position in positions
+                if position.get("sell_time") is None
+            }
+            if selected_inst_id:
+                inst_ids.add(selected_inst_id)
+            forecasts = self._live_forecasts(inst_ids)
+        analyses = self._position_analyses(positions, forecasts)
+        return build_decision_context(
+            forecasts=forecasts,
+            selected_inst_id=selected_inst_id,
+            selected_horizon=str(payload.get("horizon") or ""),
+            positions=positions,
+            analyses=analyses,
+            evaluation=self.storage.forecast_evaluation(),
+            adjustments=self.storage.forecast_strategy_adjustments(),
+            advice=self.storage.forecast_advice(),
+            analysis_scope=scope,
+            learning_run=self.storage.latest_forecast_learning_run(),
+            selected_strategy=str(payload.get("strategy_id") or "adaptive"),
+        )
+
+    def _live_forecasts(
+        self,
+        inst_ids: set[str] | None = None,
+        *,
+        recompute_signals: bool = False,
+    ) -> dict[str, dict]:
         forecasts = self._forecasts()
+        if inst_ids is not None:
+            if not inst_ids:
+                return {}
+            forecasts = {
+                inst_id: forecast
+                for inst_id, forecast in forecasts.items()
+                if inst_id in inst_ids
+            }
         quotes = self.quote_service.quotes()
-        adjustments = self.storage.forecast_strategy_adjustments()
+        adjustment_cache: dict[str, dict[str, dict]] = {}
         result = {}
         for inst_id, forecast in forecasts.items():
-            rebased = _rebase_forecast(forecast, quotes.get(inst_id))
-            variants = rebased.pop("strategy_variants", [])
-            calibrated = apply_strategy_adjustments(rebased, adjustments)
-            calibrated["strategy_variants"] = [
-                apply_strategy_adjustments(
-                    variant,
-                    self.storage.forecast_strategy_adjustments(
-                        model_version=str(variant["model_version"]),
-                    ),
-                )
-                for variant in variants
-            ]
-            result[inst_id] = calibrated
+            rebased = (
+                _rebase_forecast(forecast, quotes.get(inst_id))
+                if recompute_signals
+                else _rebase_forecast_prices(forecast, quotes.get(inst_id))
+            )
+            result[inst_id] = self._apply_cached_adjustments(rebased, adjustment_cache)
         return result
+
+    def _apply_cached_adjustments(
+        self,
+        forecast: dict,
+        cache: dict[str, dict[str, dict]],
+    ) -> dict:
+        def adjustments_for(model_version: str) -> dict[str, dict]:
+            key = model_version or "__default__"
+            if key not in cache:
+                cache[key] = (
+                    self.storage.forecast_strategy_adjustments(model_version=model_version)
+                    if model_version
+                    else self.storage.forecast_strategy_adjustments()
+                )
+            return cache[key]
+
+        forecast_body = {**forecast}
+        variants = list(forecast_body.pop("strategy_variants", []) or [])
+        calibrated = apply_strategy_adjustments(
+            forecast_body,
+            adjustments_for(str(forecast.get("model_version") or "")),
+        )
+        calibrated["strategy_variants"] = [
+            apply_strategy_adjustments(
+                variant,
+                adjustments_for(str(variant.get("model_version") or "")),
+            )
+            for variant in variants
+        ]
+        return calibrated
 
 
 def serve(host: str, port: int, data_dir: Path, db_path: Path) -> None:
@@ -407,6 +445,59 @@ def _positive(value: object, name: str) -> float:
     if number <= 0:
         raise ValueError(f"{name} must be positive")
     return number
+
+
+def _rebase_forecast_prices(
+    forecast: dict,
+    quote: dict | None,
+    *,
+    include_variants: bool = True,
+) -> dict:
+    if not quote:
+        return forecast
+    try:
+        live_price = float(quote.get("last") or 0)
+        base_price = float(forecast["current_price"])
+    except (KeyError, TypeError, ValueError):
+        return forecast
+    if live_price <= 0 or base_price <= 0:
+        return forecast
+    quote_time = (
+        datetime.fromtimestamp(
+            int(quote["ts"]) / 1000,
+            tz=timezone.utc,
+        )
+        if quote.get("ts")
+        else datetime.now(timezone.utc)
+    )
+    result = {**forecast}
+    result["current_price"] = live_price
+    result["forecast_base_price"] = live_price
+    result["quote_time"] = quote_time.isoformat()
+    result["quote_source"] = "OKX ticker · 5秒动态基准"
+    try:
+        open_24h = float(quote.get("open24h") or 0)
+        if open_24h > 0:
+            result["daily_change"] = live_price / open_24h - 1
+    except (TypeError, ValueError):
+        pass
+    for key in ("buy_zone_low", "buy_zone_high", "invalidation"):
+        if key in forecast:
+            result[key] = live_price * float(forecast[key]) / base_price
+    if "forecasts" in forecast:
+        result["forecasts"] = []
+        for original in forecast["forecasts"]:
+            item = {**original}
+            item["target"] = live_price * (1 + float(original["expected_return"]))
+            item["low"] = live_price * float(original["low"]) / base_price
+            item["high"] = live_price * float(original["high"]) / base_price
+            result["forecasts"].append(item)
+    if include_variants and forecast.get("strategy_variants"):
+        result["strategy_variants"] = [
+            _rebase_forecast_prices(variant, quote, include_variants=False)
+            for variant in forecast["strategy_variants"]
+        ]
+    return result
 
 
 def _rebase_forecast(forecast: dict, quote: dict | None) -> dict:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
@@ -111,67 +112,77 @@ class Storage:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialized = False
+        self._init_lock = threading.Lock()
 
     def init(self) -> None:
-        with self._connect() as conn:
-            conn.executescript(SCHEMA)
-            columns = {
-                str(row[1])
-                for row in conn.execute("PRAGMA table_info(spot_forecast_evaluations)")
-            }
-            if "model_version" not in columns:
-                conn.execute(
-                    "ALTER TABLE spot_forecast_evaluations "
-                    "ADD COLUMN model_version TEXT NOT NULL DEFAULT 'legacy_v1'"
-                )
-            table_sql = str(
-                conn.execute(
-                    """
-                    SELECT sql FROM sqlite_master
-                    WHERE type = 'table' AND name = 'spot_forecast_evaluations'
-                    """
-                ).fetchone()[0]
-            ).replace("\n", " ")
-            if "UNIQUE(inst_id, horizon, predicted_at, model_version)" not in table_sql:
-                conn.executescript(
-                    """
-                    ALTER TABLE spot_forecast_evaluations
-                    RENAME TO spot_forecast_evaluations_legacy;
+        if self._initialized:
+            return
+        with self._init_lock:
+            if self._initialized:
+                return
+            with self._connect() as conn:
+                conn.execute("PRAGMA journal_mode = WAL")
+                conn.execute("PRAGMA synchronous = NORMAL")
+                conn.executescript(SCHEMA)
+                columns = {
+                    str(row[1])
+                    for row in conn.execute("PRAGMA table_info(spot_forecast_evaluations)")
+                }
+                if "model_version" not in columns:
+                    conn.execute(
+                        "ALTER TABLE spot_forecast_evaluations "
+                        "ADD COLUMN model_version TEXT NOT NULL DEFAULT 'legacy_v1'"
+                    )
+                table_sql = str(
+                    conn.execute(
+                        """
+                        SELECT sql FROM sqlite_master
+                        WHERE type = 'table' AND name = 'spot_forecast_evaluations'
+                        """
+                    ).fetchone()[0]
+                ).replace("\n", " ")
+                if "UNIQUE(inst_id, horizon, predicted_at, model_version)" not in table_sql:
+                    conn.executescript(
+                        """
+                        ALTER TABLE spot_forecast_evaluations
+                        RENAME TO spot_forecast_evaluations_legacy;
 
-                    CREATE TABLE spot_forecast_evaluations (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        inst_id TEXT NOT NULL,
-                        horizon TEXT NOT NULL,
-                        predicted_at TEXT NOT NULL,
-                        due_at TEXT NOT NULL,
-                        start_price REAL NOT NULL,
-                        target_price REAL NOT NULL,
-                        low_price REAL NOT NULL,
-                        high_price REAL NOT NULL,
-                        expected_return REAL NOT NULL,
-                        up_probability REAL NOT NULL,
-                        confidence REAL NOT NULL,
-                        model_version TEXT NOT NULL DEFAULT 'legacy_v1',
-                        actual_price REAL,
-                        actual_return REAL,
-                        evaluated_at TEXT,
-                        UNIQUE(inst_id, horizon, predicted_at, model_version)
-                    );
+                        CREATE TABLE spot_forecast_evaluations (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            inst_id TEXT NOT NULL,
+                            horizon TEXT NOT NULL,
+                            predicted_at TEXT NOT NULL,
+                            due_at TEXT NOT NULL,
+                            start_price REAL NOT NULL,
+                            target_price REAL NOT NULL,
+                            low_price REAL NOT NULL,
+                            high_price REAL NOT NULL,
+                            expected_return REAL NOT NULL,
+                            up_probability REAL NOT NULL,
+                            confidence REAL NOT NULL,
+                            model_version TEXT NOT NULL DEFAULT 'legacy_v1',
+                            actual_price REAL,
+                            actual_return REAL,
+                            evaluated_at TEXT,
+                            UNIQUE(inst_id, horizon, predicted_at, model_version)
+                        );
 
-                    INSERT INTO spot_forecast_evaluations
-                    (id, inst_id, horizon, predicted_at, due_at, start_price,
-                     target_price, low_price, high_price, expected_return,
-                     up_probability, confidence, model_version, actual_price,
-                     actual_return, evaluated_at)
-                    SELECT id, inst_id, horizon, predicted_at, due_at, start_price,
-                           target_price, low_price, high_price, expected_return,
-                           up_probability, confidence, model_version, actual_price,
-                           actual_return, evaluated_at
-                    FROM spot_forecast_evaluations_legacy;
+                        INSERT INTO spot_forecast_evaluations
+                        (id, inst_id, horizon, predicted_at, due_at, start_price,
+                         target_price, low_price, high_price, expected_return,
+                         up_probability, confidence, model_version, actual_price,
+                         actual_return, evaluated_at)
+                        SELECT id, inst_id, horizon, predicted_at, due_at, start_price,
+                               target_price, low_price, high_price, expected_return,
+                               up_probability, confidence, model_version, actual_price,
+                               actual_return, evaluated_at
+                        FROM spot_forecast_evaluations_legacy;
 
-                    DROP TABLE spot_forecast_evaluations_legacy;
-                    """
-                )
+                        DROP TABLE spot_forecast_evaluations_legacy;
+                        """
+                    )
+            self._initialized = True
 
     def save_account(self, account: AccountState) -> None:
         self.init()
@@ -874,7 +885,6 @@ class Storage:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=30)
         conn.execute("PRAGMA busy_timeout = 30000")
-        conn.execute("PRAGMA journal_mode = WAL")
         return conn
 
 
