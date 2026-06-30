@@ -872,7 +872,10 @@ class Storage:
         return int(row[0])
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.path)
+        conn = sqlite3.connect(self.path, timeout=30)
+        conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        return conn
 
 
 def _clip(value: float, low: float, high: float) -> float:
