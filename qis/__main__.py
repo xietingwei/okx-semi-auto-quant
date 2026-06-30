@@ -258,7 +258,7 @@ def _fetch_us_stock_histories(symbols: tuple[str, ...]) -> dict[str, UsStockHist
         except UsStockError as exc:
             return None, exc
 
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:
         for history, error in executor.map(fetch, tuple(dict.fromkeys(symbols))):
             if error is not None:
                 print(f"Skip US stock {error}", flush=True)
