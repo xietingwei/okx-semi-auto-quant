@@ -155,7 +155,8 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert rendered == output
     html = output.read_text(encoding="utf-8")
     assert "assistantTopButton" in html
-    assert "卖出价格纪律" in html
+    assert "exitLevels:'卖出价格'" in html
+    assert "strategyNames[selectedRadarStrategy]" not in html
     assert ".message.ai{" in html
     assert "role==='assistant'?'ai':role" in html
     assert ".message.assistant{" not in html
