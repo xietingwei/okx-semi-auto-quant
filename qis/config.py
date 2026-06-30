@@ -38,6 +38,7 @@ class Settings:
     inst_id: str
     inst_ids: tuple[str, ...]
     stock_inst_ids: tuple[str, ...]
+    us_stock_symbols: tuple[str, ...]
     spot_inst_ids: tuple[str, ...]
     spot_auto_discover: bool
     spot_max_assets: int
@@ -102,7 +103,19 @@ def load_settings() -> Settings:
             item.strip()
             for item in os.environ.get(
                 "QIS_STOCK_INST_IDS",
-                "AAPL-USDT-SWAP,AMZN-USDT-SWAP,GOOGL-USDT-SWAP,META-USDT-SWAP,MSFT-USDT-SWAP,NVDA-USDT-SWAP,TSLA-USDT-SWAP",
+                "",
+            ).split(",")
+            if item.strip()
+        ),
+        us_stock_symbols=tuple(
+            item.strip().upper()
+            for item in os.environ.get(
+                "QIS_US_STOCK_SYMBOLS",
+                (
+                    "AAPL,MSFT,NVDA,AMZN,META,GOOGL,TSLA,AVGO,AMD,NFLX,"
+                    "CRM,ORCL,ADBE,COST,JPM,V,MA,UNH,LLY,MRK,"
+                    "XOM,CVX,KO,PEP,WMT,HD,MCD,NKE,DIS,INTC"
+                ),
             ).split(",")
             if item.strip()
         ),

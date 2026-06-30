@@ -5,10 +5,11 @@ Last updated: 2026-06-30.
 ## Product intent
 
 QIS is a local-first OKX semi-auto quant decision system. It analyzes spot and
-swap markets, presents a manual decision dashboard, records human trade
-decisions, monitors positions, and can ask an OpenAI-compatible LLM for decision
-context. It must remain analysis/manual-registration only by default; do not add
-automatic trading from the web UI without explicit user direction.
+swap markets plus external US-stock daily data, presents a manual decision
+dashboard, records human trade decisions, monitors positions, and can ask an
+OpenAI-compatible LLM for decision context. It must remain
+analysis/manual-registration only by default; do not add automatic trading from
+the web UI without explicit user direction.
 
 ## User preferences and recurring pain points
 
@@ -77,6 +78,9 @@ If a test creates manual position records in `data/qis.sqlite3`, use a unique
   transactions and avoid repeating schema initialization in hot paths.
 - `/api/spot/quotes` and `/api/spot/positions` must stay fast; avoid full model
   recomputation in request handlers.
+- US-stock opportunities use `QIS_US_STOCK_SYMBOLS` and Yahoo Finance daily
+  candles via `qis/us_stocks.py`; the UI should identify the data source,
+  exchange, and broker/platform hint because these are not OKX spot quotes.
 - Assistant failures may be due to LLM/network configuration, but the UI should
   still stream a clear error event and re-enable the send button.
 - Current launch scripts bind the web app to `127.0.0.1:8787`.

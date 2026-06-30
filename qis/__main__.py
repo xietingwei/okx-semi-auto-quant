@@ -18,7 +18,7 @@ from qis.email_alerts import notify_opportunities
 from qis.external_intel import ExternalIntelAnalyzer
 from qis.forecast_learning import apply_strategy_adjustments, hour_bucket
 from qis.macro import MacroAnalyzer
-from qis.market_factors import build_market_contexts, global_market_environment
+from qis.market_factors import build_market_contexts, global_market_environment, market_context
 from qis.models import Mode
 from qis.okx import OkxClient, OkxError
 from qis.portal import render_portal
@@ -28,6 +28,7 @@ from qis.storage import Storage
 from qis.spot_dashboard import render_spot_dashboard
 from qis.spot_forecast import SpotForecastEngine
 from qis.strategy import DonchianBreakoutStrategy
+from qis.us_stocks import YahooFinanceClient, UsStockError, UsStockHistory
 from qis.web_server import serve
 
 
@@ -75,7 +76,7 @@ def _render_spot(settings, output: Path) -> None:
     storage = Storage(settings.db_path)
     forecasts = []
     strategy_suites = {}
-    inst_ids = _discover_spot_ids(client, settings)
+    okx_inst_ids = _discover_spot_ids(client, settings)
     ticker_map = _ticker_map(client)
     candles_by_inst = {}
     def fetch_candles(inst_id: str):
@@ -85,34 +86,61 @@ def _render_spot(settings, output: Path) -> None:
             return inst_id, None, exc
 
     with ThreadPoolExecutor(max_workers=8) as executor:
-        for inst_id, candles, error in executor.map(fetch_candles, inst_ids):
+        for inst_id, candles, error in executor.map(fetch_candles, okx_inst_ids):
             if error is not None:
                 print(f"Skip {inst_id}: {error}", flush=True)
             elif candles:
                 candles_by_inst[inst_id] = candles
+    stock_histories = _fetch_us_stock_histories(settings.us_stock_symbols)
+    for history in stock_histories.values():
+        candles_by_inst[history.inst_id] = history.candles
     macro = MacroAnalyzer().analyze()
     environment = global_market_environment(
-        tuple(candles_by_inst),
+        tuple(inst_id for inst_id in okx_inst_ids if inst_id in candles_by_inst),
         ticker_map,
         candles_by_inst,
     )
     contexts = build_market_contexts(
         client,
-        tuple(candles_by_inst),
+        tuple(inst_id for inst_id in okx_inst_ids if inst_id in candles_by_inst),
         ticker_map,
         candles_by_inst,
         macro,
         environment,
         Path("data/market_factors.json"),
     )
+    for history in stock_histories.values():
+        contexts[history.inst_id] = market_context(
+            book={},
+            funding={},
+            ticker={
+                "last": str(history.candles[-1].close),
+                "open24h": str(history.candles[-2].close),
+            },
+            candles=history.candles,
+            macro=macro,
+            environment=environment,
+            open_interest=0.0,
+            open_interest_change=0.0,
+            open_interest_history_available=False,
+        )
     for inst_id, candles in candles_by_inst.items():
         ticker = ticker_map.get(inst_id, {})
+        stock_history = stock_histories.get(inst_id)
         try:
-            live_price = float(ticker.get("last") or 0) or None
+            live_price = (
+                stock_history.candles[-1].close
+                if stock_history
+                else float(ticker.get("last") or 0) or None
+            )
             quote_time = (
+                stock_history.candles[-1].ts
+                if stock_history
+                else (
                 datetime.fromtimestamp(int(ticker["ts"]) / 1000, tz=timezone.utc)
                 if ticker.get("ts")
                 else None
+                )
             )
         except (TypeError, ValueError):
             live_price, quote_time = None, None
@@ -134,18 +162,47 @@ def _render_spot(settings, output: Path) -> None:
         else:
             forecast = None
         if forecast:
-            forecasts.append(forecast)
+            forecast_body = asdict(forecast)
+            if stock_history:
+                forecast_body.update(
+                    {
+                        "market_type": "美股现货",
+                        "quote_source": stock_history.quote_source,
+                        "data_source": stock_history.quote_source,
+                        "exchange": stock_history.exchange,
+                        "trade_platform": stock_history.trade_platform,
+                    }
+                )
+                suite = [
+                    {
+                        **variant,
+                        "market_type": "美股现货",
+                        "quote_source": stock_history.quote_source,
+                        "data_source": stock_history.quote_source,
+                        "exchange": stock_history.exchange,
+                        "trade_platform": stock_history.trade_platform,
+                    }
+                    for variant in suite
+                ]
+                forecasts.append(forecast_body)
+            else:
+                forecasts.append(forecast)
             strategy_suites[inst_id] = suite
             if not storage.has_forecast_history(inst_id):
                 _backfill_forecast_history(storage, engine, inst_id, candles)
     if not forecasts:
         raise RuntimeError("no spot forecasts available")
     observed_at = max(
-        datetime.fromisoformat(item.quote_time)
+        datetime.fromisoformat(item["quote_time"] if isinstance(item, dict) else item.quote_time)
         for item in forecasts
     )
     evaluated_count = storage.evaluate_due_forecasts(
-        {item.inst_id: item.current_price for item in forecasts},
+        {
+            (item["inst_id"] if isinstance(item, dict) else item.inst_id): (
+                item["current_price"] if isinstance(item, dict) else item.current_price
+            )
+            for item in forecasts
+        },
         observed_at=observed_at,
     )
     adjustments = storage.forecast_strategy_adjustments()
@@ -154,10 +211,11 @@ def _render_spot(settings, output: Path) -> None:
     predicted_at = hour_bucket(observed_at)
     calibrated_forecasts = []
     for forecast in forecasts:
-        raw = asdict(forecast)
+        raw = forecast if isinstance(forecast, dict) else asdict(forecast)
         calibrated = apply_strategy_adjustments(raw, adjustments)
         calibrated_variants = []
-        for variant in strategy_suites.get(forecast.inst_id, []):
+        forecast_inst_id = str(raw["inst_id"])
+        for variant in strategy_suites.get(forecast_inst_id, []):
             variant_adjustments = storage.forecast_strategy_adjustments(
                 model_version=str(variant["model_version"]),
             )
@@ -188,6 +246,25 @@ def _render_spot(settings, output: Path) -> None:
             print(f"Email opportunity alert sent ({notified} candidates)", flush=True)
     except Exception as exc:
         print(f"Email opportunity alert failed: {exc}", flush=True)
+
+
+def _fetch_us_stock_histories(symbols: tuple[str, ...]) -> dict[str, UsStockHistory]:
+    client = YahooFinanceClient()
+    histories = {}
+
+    def fetch(symbol: str):
+        try:
+            return client.daily_history(symbol), None
+        except UsStockError as exc:
+            return None, exc
+
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        for history, error in executor.map(fetch, tuple(dict.fromkeys(symbols))):
+            if error is not None:
+                print(f"Skip US stock {error}", flush=True)
+            elif history is not None:
+                histories[history.inst_id] = history
+    return histories
 
 
 def _ticker_map(client: OkxClient) -> dict[str, dict]:

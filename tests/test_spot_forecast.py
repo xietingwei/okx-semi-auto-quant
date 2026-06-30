@@ -165,6 +165,8 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert "messages.zh.usStockOpportunities='美股机会'" in html
     assert "location.hash=radarView==='usStocks'?'us-stocks':'opportunity'" in html
     assert "radarScope==='usStocks'?'equity':$('radarMarket').value" in html
+    assert "sourceLine=x=>[x.data_source||x.quote_source,x.trade_platform]" in html
+    assert "美股现货':'US Stock" in html
     assert 'data-scope="global"' in html
     assert 'data-radar-strategy="adaptive"' in html
     assert 'data-radar-strategy="trend"' in html

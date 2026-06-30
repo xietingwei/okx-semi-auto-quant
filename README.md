@@ -48,7 +48,7 @@ QIS is designed around four principles:
 
 | Capability | What it provides |
 | --- | --- |
-| Opportunity radar | Ranks crypto and stock-mapped OKX instruments using calibrated multi-horizon forecasts |
+| Opportunity radar | Ranks crypto, external US-stock daily data, and optional OKX stock-mapped instruments using calibrated multi-horizon forecasts |
 | Strategy desk | Compares adaptive, trend-following, breakout-confirmation, and mean-reversion models |
 | Live-price forecasting | Recalculates features, probability, return, and target from the latest OKX ticker |
 | Market context | Uses order-book depth, funding, open interest, volume structure, macro data, and market breadth |
@@ -78,6 +78,7 @@ Until enough strategy-specific outcomes mature, they remain marked
 The active model family currently combines:
 
 - live OKX ticker price;
+- Yahoo Finance daily US-stock candles for `QIS_US_STOCK_SYMBOLS`, with the UI showing the exchange and broker/trading venue hint;
 - 30/90-day log-price trends;
 - 7/30/90-day momentum;
 - 60-day realized volatility and ATR;

@@ -29,6 +29,7 @@ because the launch scripts and generated dashboard paths are deliberately simple
 | `qis/decision_assistant.py` | OpenAI-compatible LLM request/streaming and decision-context construction. |
 | `qis/forecast_learning.py` | Walk-forward calibration and adjustment application. |
 | `qis/okx.py` | OKX REST client wrappers. |
+| `qis/us_stocks.py` | Yahoo Finance daily-candle client for external US stock opportunity candidates. |
 | `qis/config.py` | Environment-backed runtime settings. |
 
 ## Runtime flow
