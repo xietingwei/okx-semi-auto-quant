@@ -161,6 +161,10 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert "role==='assistant'?'ai':role" in html
     assert ".message.assistant{" not in html
     assert 'data-frame="1H"' in html
+    assert 'data-view="usStocks"' in html
+    assert "messages.zh.usStockOpportunities='美股机会'" in html
+    assert "location.hash=radarView==='usStocks'?'us-stocks':'opportunity'" in html
+    assert "radarScope==='usStocks'?'equity':$('radarMarket').value" in html
     assert 'data-scope="global"' in html
     assert 'data-radar-strategy="adaptive"' in html
     assert 'data-radar-strategy="trend"' in html
