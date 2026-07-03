@@ -8,6 +8,7 @@ from qis.models import Candle
 
 
 FORECAST_MODEL_VERSION = "global_regime_context_v7"
+FORECAST_HISTORY_LIMIT = 200
 
 STRATEGY_CATALOG = (
     {
@@ -160,7 +161,7 @@ class SpotForecastEngine:
                 "close": item.close,
                 "volume": item.volume,
             }
-            for item in closed[-120:]
+            for item in closed[-FORECAST_HISTORY_LIMIT:]
         ]
         factors = {
             "trend": self._strength_label((trend_30 + trend_90) / 2),

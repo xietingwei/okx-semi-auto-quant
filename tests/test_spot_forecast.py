@@ -36,6 +36,15 @@ def test_spot_forecast_has_all_horizons() -> None:
     assert max(abs(item.expected_return) for item in forecast.forecasts) <= 0.45
 
 
+def test_spot_forecast_preserves_six_month_history_for_deep_analysis() -> None:
+    candles = _daily_candles(count=240)
+    forecast = SpotForecastEngine().analyze("BTC-USDT", candles)
+
+    assert forecast is not None
+    assert len(forecast.history) >= 181
+    assert forecast.history[-1]["date"] == candles[-2].ts.isoformat()
+
+
 def test_long_horizon_momentum_is_not_linearly_amplified() -> None:
     value_90 = SpotForecastEngine._momentum_blend(90, 0.1, 0.2, 0.3)
     value_180 = SpotForecastEngine._momentum_blend(180, 0.1, 0.2, 0.3)
@@ -174,7 +183,8 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert "q.core_validation_rate" in html
     assert 'id="deepRankBtn"' in html
     assert 'id="deepRankDialog"' in html
-    assert "/api/deep-analysis/rank?days=126" in html
+    assert "/api/deep-analysis?inst_id=${encodeURIComponent(inst)}&days=180" in html
+    assert "/api/deep-analysis/rank?days=180" in html
     assert "function renderDeepRank" in html
     assert "deepRank:'全部深度分析'" in html
     assert "data-detail-inst" in html

@@ -66,6 +66,7 @@ CORE_MIN_SAMPLES = 8
 CORE_MIN_SUCCESS_RATE = 0.60
 WATCH_MIN_SAMPLES = 5
 WATCH_MIN_SUCCESS_RATE = 0.54
+DEEP_ANALYSIS_MAX_DAYS = 180
 
 
 class DeepAnalysisEngine:
@@ -74,12 +75,12 @@ class DeepAnalysisEngine:
         forecast: dict[str, Any],
         *,
         news: list[NewsItem] | None = None,
-        max_days: int = 126,
+        max_days: int = DEEP_ANALYSIS_MAX_DAYS,
     ) -> dict[str, Any]:
         candles = _history(forecast)
         if len(candles) < 35:
             raise ValueError("深度分析至少需要 35 根日 K")
-        max_days = max(20, min(max_days, 126))
+        max_days = max(20, min(max_days, DEEP_ANALYSIS_MAX_DAYS))
         start = max(1, len(candles) - max_days)
         news_by_day = _news_by_day(news or [])
         daily = [
@@ -300,9 +301,9 @@ class DeepAnalysisEngine:
 def rank_deep_analyses(
     forecasts: list[dict[str, Any]],
     *,
-    max_days: int = 126,
+    max_days: int = DEEP_ANALYSIS_MAX_DAYS,
 ) -> dict[str, Any]:
-    days = max(20, min(max_days, 126))
+    days = max(20, min(max_days, DEEP_ANALYSIS_MAX_DAYS))
     engine = DeepAnalysisEngine()
     ranked = []
     skipped = []

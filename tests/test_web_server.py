@@ -31,6 +31,42 @@ def _rank_route_forecast() -> dict:
     }
 
 
+def _route_forecast(
+    inst_id: str,
+    *,
+    symbol: str,
+    count: int,
+    source: str,
+    market_type: str,
+) -> dict:
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    price = 100.0
+    history = []
+    for index in range(count):
+        open_price = price
+        price *= 1.002
+        history.append(
+            {
+                "date": (start + timedelta(days=index)).date().isoformat(),
+                "open": open_price,
+                "high": price * 1.006,
+                "low": open_price * 0.994,
+                "close": price,
+                "volume": 1000 + index,
+            }
+        )
+    return {
+        "inst_id": inst_id,
+        "symbol": symbol,
+        "market_type": market_type,
+        "data_source": source,
+        "quote_source": source,
+        "current_price": price,
+        "history": history,
+        "forecasts": [{"key": "1w", "expected_return": 0.03}],
+    }
+
+
 def test_deep_analysis_rank_route_returns_ranked_payload(monkeypatch) -> None:
     handler = QisRequestHandler.__new__(QisRequestHandler)
     handler.path = "/api/deep-analysis/rank?days=80"
@@ -54,6 +90,52 @@ def test_deep_analysis_rank_route_returns_ranked_payload(monkeypatch) -> None:
     assert payload["ok"] is True
     assert payload["ranking"]["ranked"][0]["inst_id"] == "RANK-USDT"
     assert payload["ranking"]["ranked"][0]["rank"] == 1
+
+
+def test_deep_analysis_route_prefers_long_external_stock_history(monkeypatch) -> None:
+    handler = QisRequestHandler.__new__(QisRequestHandler)
+    handler.path = "/api/deep-analysis?inst_id=TSLA-USDT-SWAP&days=180"
+    payloads = []
+    okx_mapping = _route_forecast(
+        "TSLA-USDT-SWAP",
+        symbol="TSLA",
+        count=128,
+        source="OKX ticker",
+        market_type="股票映射行情",
+    )
+    yahoo_stock = _route_forecast(
+        "TSLA-US",
+        symbol="TSLA",
+        count=220,
+        source="Yahoo Finance 日线 · NMS",
+        market_type="美股现货",
+    )
+
+    monkeypatch.setattr(
+        QisRequestHandler,
+        "_live_forecasts",
+        lambda self, inst_ids=None: {
+            "TSLA-USDT-SWAP": okx_mapping,
+            "TSLA-US": yahoo_stock,
+        },
+    )
+    monkeypatch.setattr("qis.web_server.fetch_deep_news", lambda symbol: [])
+    monkeypatch.setattr(
+        QisRequestHandler,
+        "_json",
+        lambda self, payload, status=200: payloads.append((status, payload)),
+    )
+
+    QisRequestHandler.do_GET(handler)
+
+    status, payload = payloads[0]
+    analysis = payload["analysis"]
+    assert status == 200
+    assert payload["ok"] is True
+    assert analysis["inst_id"] == "TSLA-USDT-SWAP"
+    assert analysis["market_type"] == "美股现货"
+    assert "Yahoo Finance" in analysis["data_source"]
+    assert analysis["range_days"] == 180
 
 
 def test_rebase_forecast_uses_latest_price_for_all_price_targets() -> None:

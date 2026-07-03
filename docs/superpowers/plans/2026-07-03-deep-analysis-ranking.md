@@ -28,7 +28,7 @@ Expected: fail because `rank_deep_analyses` does not exist yet.
 
 - [ ] **Step 3: Implement minimal ranking helper**
 
-Create `rank_deep_analyses(forecasts, max_days=126)` and private helpers for rank score, current pattern lookup, and sort key.
+Create `rank_deep_analyses(forecasts, max_days=180)` and private helpers for rank score, current pattern lookup, and sort key.
 
 - [ ] **Step 4: Verify GREEN**
 

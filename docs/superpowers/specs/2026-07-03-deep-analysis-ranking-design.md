@@ -31,7 +31,7 @@ The leaderboard columns are rank, symbol, market/source, core hit rate, all-samp
 
 ## API
 
-`GET /api/deep-analysis/rank?days=126`
+`GET /api/deep-analysis/rank?days=180`
 
 Response shape:
 
@@ -40,7 +40,7 @@ Response shape:
   "ok": true,
   "ranking": {
     "generated_at": "2026-07-03T00:00:00+00:00",
-    "days": 126,
+    "days": 180,
     "total": 89,
     "ranked": [],
     "skipped": []

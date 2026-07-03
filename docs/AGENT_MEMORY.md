@@ -43,9 +43,15 @@ the web UI without explicit user direction.
   - API: `POST /api/spot/delete`
   - UI: “删除记录 / Delete Record” buttons in position cards and trade log
 - The dashboard detail page has a “深度分析 / Deep Analysis” action backed by
-  `GET /api/deep-analysis`. It reviews up to 126 recent daily candles, attaches
-  external news when available, validates each hypothesis on later price action,
-  and summarizes repeated patterns as the super-brain mode library.
+  `GET /api/deep-analysis`. It reviews up to 180 recent daily candles when the
+  source has enough history, attaches external news when available, validates
+  each hypothesis on later price action, and summarizes repeated patterns as the
+  super-brain mode library. Forecast caches keep up to 200 daily candles so the
+  180-day review has enough prior-day context; newly listed symbols may still
+  show shorter actual coverage. If an OKX stock-mapped symbol has short history
+  but a same-symbol Yahoo Finance US-stock forecast exists, the deep-analysis
+  API uses the longer Yahoo daily history while preserving the selected
+  instrument id in the response.
 - The opportunity radar has an “全部深度分析 / All Deep Analysis” ranking action
   backed by `GET /api/deep-analysis/rank`. Ranking is reliability-first:
   projection-ready symbols with core patterns outrank weak or rejected patterns;

@@ -104,6 +104,15 @@ def test_deep_analysis_builds_daily_reviews_and_super_brain() -> None:
     assert all(day["hypotheses"][0]["validation"]["status"] for day in result["daily"])
 
 
+def test_deep_analysis_accepts_six_month_daily_window() -> None:
+    forecast = _forecast(count=220)
+
+    result = DeepAnalysisEngine().analyze(forecast, max_days=180)
+
+    assert result["range_days"] == 180
+    assert result["quality_gate"]["daily_coverage"] == 180
+
+
 def test_deep_analysis_rejects_short_history() -> None:
     forecast = _forecast(count=20)
 

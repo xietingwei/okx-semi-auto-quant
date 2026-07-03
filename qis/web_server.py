@@ -8,7 +8,12 @@ import threading
 import time
 from urllib.parse import parse_qs, urlparse
 
-from qis.deep_analysis import DeepAnalysisEngine, fetch_deep_news, rank_deep_analyses
+from qis.deep_analysis import (
+    DEEP_ANALYSIS_MAX_DAYS,
+    DeepAnalysisEngine,
+    fetch_deep_news,
+    rank_deep_analyses,
+)
 from qis.decision_assistant import (
     DecisionAssistant,
     DecisionAssistantError,
@@ -20,7 +25,7 @@ from qis.models import Candle
 from qis.okx import OkxClient, OkxError
 from qis.position_risk import analyze_position
 from qis.spot_dashboard import render_spot_dashboard_cache
-from qis.spot_forecast import SpotForecastEngine
+from qis.spot_forecast import FORECAST_HISTORY_LIMIT, SpotForecastEngine
 from qis.storage import Storage
 
 
@@ -119,7 +124,7 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                 candles = OkxClient().public_candles(
                     inst_id,
                     bar,
-                    limit=168 if bar == "1H" else 120,
+                    limit=168 if bar == "1H" else FORECAST_HISTORY_LIMIT,
                 )
             except OkxError as exc:
                 self._json({"ok": False, "error": str(exc)}, 503)
@@ -145,13 +150,16 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
         if path == "/api/deep-analysis/rank":
             query = parse_qs(urlparse(self.path).query)
             try:
-                days = int((query.get("days") or ["126"])[0])
+                days = int((query.get("days") or [str(DEEP_ANALYSIS_MAX_DAYS)])[0])
             except ValueError:
                 self._json({"ok": False, "error": "invalid days"}, 400)
                 return
             forecasts = self._live_forecasts()
             ranking = rank_deep_analyses(
-                list(forecasts.values()),
+                [
+                    _deep_analysis_forecast(forecast, forecasts)
+                    for forecast in forecasts.values()
+                ],
                 max_days=days,
             )
             self._json({"ok": True, "ranking": ranking})
@@ -160,19 +168,20 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
             query = parse_qs(urlparse(self.path).query)
             inst_id = str((query.get("inst_id") or [""])[0])
             try:
-                days = int((query.get("days") or ["126"])[0])
+                days = int((query.get("days") or [str(DEEP_ANALYSIS_MAX_DAYS)])[0])
             except ValueError:
                 self._json({"ok": False, "error": "invalid days"}, 400)
                 return
-            forecasts = self._live_forecasts({inst_id}) if inst_id else {}
+            forecasts = self._live_forecasts() if inst_id else {}
             forecast = forecasts.get(inst_id)
             if forecast is None:
                 self._json({"ok": False, "error": "unknown instrument"}, 404)
                 return
+            analysis_forecast = _deep_analysis_forecast(forecast, forecasts)
             news = fetch_deep_news(inst_id)
             try:
                 analysis = DeepAnalysisEngine().analyze(
-                    forecast,
+                    analysis_forecast,
                     news=news,
                     max_days=days,
                 )
@@ -492,6 +501,41 @@ def _positive(value: object, name: str) -> float:
     if number <= 0:
         raise ValueError(f"{name} must be positive")
     return number
+
+
+def _deep_analysis_forecast(forecast: dict, forecasts: dict[str, dict]) -> dict:
+    symbol = str(forecast.get("symbol") or "").upper()
+    if not symbol:
+        return forecast
+    current_len = _history_len(forecast)
+    alternatives = [
+        item
+        for item in forecasts.values()
+        if item is not forecast
+        and str(item.get("inst_id") or "") != str(forecast.get("inst_id") or "")
+        and str(item.get("symbol") or "").upper() == symbol
+        and _is_external_equity_history(item)
+        and _history_len(item) > current_len
+    ]
+    if not alternatives:
+        return forecast
+    best = max(alternatives, key=_history_len)
+    merged = {**best}
+    merged["inst_id"] = forecast.get("inst_id") or best.get("inst_id")
+    merged["symbol"] = forecast.get("symbol") or best.get("symbol")
+    merged["analysis_source_inst_id"] = best.get("inst_id")
+    return merged
+
+
+def _is_external_equity_history(forecast: dict) -> bool:
+    source = str(forecast.get("data_source") or forecast.get("quote_source") or "")
+    market_type = str(forecast.get("market_type") or "")
+    return market_type == "美股现货" or "Yahoo Finance" in source
+
+
+def _history_len(forecast: dict) -> int:
+    history = forecast.get("history")
+    return len(history) if isinstance(history, list) else 0
 
 
 def _rebase_forecast_prices(
