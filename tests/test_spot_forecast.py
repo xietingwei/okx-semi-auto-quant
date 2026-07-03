@@ -161,6 +161,16 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert "role==='assistant'?'ai':role" in html
     assert ".message.assistant{" not in html
     assert 'data-frame="1H"' in html
+    assert 'id="chartTooltip"' in html
+    assert "function bindChartHover(points)" in html
+    assert 'id="hoverLayer"' in html
+    assert 'id="deepAnalysisBtn"' in html
+    assert 'id="deepDialog"' in html
+    assert "/api/deep-analysis?inst_id=" in html
+    assert "function renderDeepAnalysis(analysis)" in html
+    assert "superBrain:'超级大脑'" in html
+    assert "data-detail-inst" in html
+    assert "openPositionDetail(row.dataset.detailInst)" in html
     assert 'data-view="usStocks"' in html
     assert "messages.zh.usStockOpportunities='美股机会'" in html
     assert "location.hash=radarView==='usStocks'?'us-stocks':'opportunity'" in html

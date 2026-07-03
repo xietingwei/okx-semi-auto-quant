@@ -25,6 +25,7 @@ because the launch scripts and generated dashboard paths are deliberately simple
 | `qis/spot_dashboard.py` | Source template for `data/index.html`; edit this file, not generated HTML. |
 | `qis/storage.py` | SQLite schema and persistence helpers for positions, manual trades, forecast evaluations, and learning runs. |
 | `qis/spot_forecast.py` | Spot forecast model, strategy variants, opportunity scoring, and model versioning. |
+| `qis/deep_analysis.py` | Per-symbol daily deep analysis, hypothesis validation, and super-brain pattern summaries. |
 | `qis/position_risk.py` | Holding-level sentinel analysis: stops, target distance, risk score, and sell timing. |
 | `qis/decision_assistant.py` | OpenAI-compatible LLM request/streaming and decision-context construction. |
 | `qis/forecast_learning.py` | Walk-forward calibration and adjustment application. |
@@ -43,6 +44,7 @@ scripts/start.sh
   ├─ python3 -m qis web
   │    ├─ serves http://127.0.0.1:8787/
   │    ├─ exposes /api/spot/positions, /buy, /sell, /delete
+  │    ├─ exposes /api/deep-analysis for selected-symbol daily reviews
   │    └─ streams /api/assistant/stream
   └─ python3 -m qis doctor
 ```

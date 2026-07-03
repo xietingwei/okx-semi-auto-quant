@@ -50,6 +50,7 @@ QIS is designed around four principles:
 | --- | --- |
 | Opportunity radar | Ranks crypto, external US-stock daily data, and optional OKX stock-mapped instruments using calibrated multi-horizon forecasts |
 | Strategy desk | Compares adaptive, trend-following, breakout-confirmation, and mean-reversion models |
+| Deep analysis | Reviews up to six months of daily candles, explains each day with quantitative facts and news context, validates the hypotheses, and summarizes repeatable patterns into a super brain |
 | Live-price forecasting | Recalculates features, probability, return, and target from the latest OKX ticker |
 | Market context | Uses order-book depth, funding, open interest, volume structure, macro data, and market breadth |
 | Position sentinel | Suggests dynamic stops, profit protection, reductions, and exit timing for manually registered positions |
@@ -315,6 +316,7 @@ Read [SECURITY.md](SECURITY.md) before configuring credentials.
 ```text
 qis/
 ├── spot_forecast.py      multi-horizon strategy engines
+├── deep_analysis.py      daily hypothesis validation and super brain
 ├── market_factors.py     market microstructure and global regime
 ├── forecast_learning.py  bounded historical calibration
 ├── position_risk.py      post-entry stop and exit recommendations

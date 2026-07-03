@@ -1,6 +1,6 @@
 # Agent memory for QIS handoff
 
-Last updated: 2026-06-30.
+Last updated: 2026-07-03.
 
 ## Product intent
 
@@ -23,6 +23,9 @@ the web UI without explicit user direction.
   runtime process, not just the frontend event handler.
 - Restart the local service after backend or dashboard-template changes when
   validating real behavior.
+- Deep analysis should present evidence-backed daily hypotheses and validation
+  status, not unsupported one-shot certainty. The “super brain” is a pattern
+  library built from tested daily hypotheses.
 
 ## Recent system fixes
 
@@ -37,6 +40,10 @@ the web UI without explicit user direction.
   - storage: `Storage.delete_spot_position`
   - API: `POST /api/spot/delete`
   - UI: “删除记录 / Delete Record” buttons in position cards and trade log
+- The dashboard detail page has a “深度分析 / Deep Analysis” action backed by
+  `GET /api/deep-analysis`. It reviews up to 126 recent daily candles, attaches
+  external news when available, validates each hypothesis on later price action,
+  and summarizes repeated patterns as the super-brain mode library.
 
 ## Key API endpoints
 
@@ -45,6 +52,7 @@ the web UI without explicit user direction.
 | `/api/spot/positions` | `GET` | Returns spot positions, sentinel risk analyses, trade stats, model evaluation, strategy adjustments, advice, and latest learning run. |
 | `/api/spot/quotes` | `GET` | Returns live-rebased opportunity radar forecasts. |
 | `/api/spot/candles` | `GET` | Returns OKX candles for the selected instrument and bar. |
+| `/api/deep-analysis` | `GET` | Returns selected-symbol daily reviews, hypothesis validations, scenarios, and super-brain patterns. |
 | `/api/spot/buy` | `POST` | Opens a manual spot position record. |
 | `/api/spot/sell` | `POST` | Closes a manual spot position record with realized PnL. |
 | `/api/spot/delete` | `POST` | Permanently deletes a manual spot position record. |
@@ -56,7 +64,7 @@ the web UI without explicit user direction.
 Use focused tests first, then full tests:
 
 ```bash
-python3 -m pytest tests/test_storage.py tests/test_spot_forecast.py tests/test_web_server.py -q
+python3 -m pytest tests/test_storage.py tests/test_spot_forecast.py tests/test_deep_analysis.py tests/test_web_server.py -q
 python3 -m pytest -q
 git diff --check
 git status --short

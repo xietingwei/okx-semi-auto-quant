@@ -8,6 +8,7 @@ import threading
 import time
 from urllib.parse import parse_qs, urlparse
 
+from qis.deep_analysis import DeepAnalysisEngine, fetch_deep_news
 from qis.decision_assistant import (
     DecisionAssistant,
     DecisionAssistantError,
@@ -140,6 +141,31 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                     ],
                 }
             )
+            return
+        if path == "/api/deep-analysis":
+            query = parse_qs(urlparse(self.path).query)
+            inst_id = str((query.get("inst_id") or [""])[0])
+            try:
+                days = int((query.get("days") or ["126"])[0])
+            except ValueError:
+                self._json({"ok": False, "error": "invalid days"}, 400)
+                return
+            forecasts = self._live_forecasts({inst_id}) if inst_id else {}
+            forecast = forecasts.get(inst_id)
+            if forecast is None:
+                self._json({"ok": False, "error": "unknown instrument"}, 404)
+                return
+            news = fetch_deep_news(inst_id)
+            try:
+                analysis = DeepAnalysisEngine().analyze(
+                    forecast,
+                    news=news,
+                    max_days=days,
+                )
+            except ValueError as exc:
+                self._json({"ok": False, "error": str(exc)}, 422)
+                return
+            self._json({"ok": True, "analysis": analysis})
             return
         if path == "/api/health":
             self._json(
