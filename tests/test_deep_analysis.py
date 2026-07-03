@@ -79,3 +79,63 @@ def test_deep_analysis_rejects_short_history() -> None:
 
     with pytest.raises(ValueError, match="35"):
         DeepAnalysisEngine().analyze(forecast)
+
+
+def test_super_brain_marks_low_accuracy_patterns_unusable_for_projection() -> None:
+    daily = []
+    for index in range(10):
+        daily.append(
+            {
+                "date": f"2026-01-{index + 1:02d}",
+                "pattern": {
+                    "id": "transition",
+                    "name": "过渡震荡",
+                    "direction": "neutral",
+                    "evidence": ["量价结构未形成明确优势"],
+                    "invalidation": "等待突破或跌破后重新判断",
+                },
+                "hypotheses": [
+                    {
+                        "validation": {
+                            "status": "confirmed" if index < 4 else "rejected",
+                            "return_5d": 0.01,
+                            "max_drawdown_5d": -0.03,
+                        }
+                    }
+                ],
+            }
+        )
+
+    row = DeepAnalysisEngine()._super_brain(daily)[0]
+
+    assert row["quality_tier"] == "rejected"
+    assert row["usable_for_projection"] is False
+    assert row["verdict"] == "暂不进入核心大脑"
+
+
+def test_low_quality_current_pattern_downgrades_future_scenarios() -> None:
+    latest = {
+        "pattern": {
+            "id": "transition",
+            "name": "过渡震荡",
+            "invalidation": "等待突破或跌破后重新判断",
+        }
+    }
+    patterns = [
+        {
+            "pattern_id": "transition",
+            "name": "过渡震荡",
+            "success_rate": 0.35,
+            "avg_5d_return": 0.01,
+            "samples": 48,
+            "usable_for_projection": False,
+            "verdict": "暂不进入核心大脑",
+        }
+    ]
+    forecast = {"forecasts": [{"key": "1w", "expected_return": 0.03}]}
+
+    scenarios = DeepAnalysisEngine()._scenarios(latest, patterns, forecast)
+
+    assert scenarios[0]["direction"] == "低可信观望"
+    assert scenarios[0]["probability"] > scenarios[1]["probability"]
+    assert "未通过核心门槛" in scenarios[0]["reason"]

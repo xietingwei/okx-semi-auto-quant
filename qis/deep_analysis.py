@@ -62,6 +62,12 @@ class YahooNewsClient:
         return rows
 
 
+CORE_MIN_SAMPLES = 8
+CORE_MIN_SUCCESS_RATE = 0.60
+WATCH_MIN_SAMPLES = 5
+WATCH_MIN_SUCCESS_RATE = 0.54
+
+
 class DeepAnalysisEngine:
     def analyze(
         self,
@@ -82,6 +88,21 @@ class DeepAnalysisEngine:
         ]
         patterns = self._super_brain(daily)
         scenarios = self._scenarios(daily[-1], patterns, forecast)
+        core_patterns = [
+            item for item in patterns if item.get("usable_for_projection")
+        ]
+        core_tested = sum(int(item.get("tested_count") or 0) for item in core_patterns)
+        core_validated = sum(
+            int(item.get("validated_count") or 0) for item in core_patterns
+        )
+        current_pattern = next(
+            (
+                item
+                for item in patterns
+                if item["pattern_id"] == daily[-1]["pattern"]["id"]
+            ),
+            None,
+        )
         validated = [
             item
             for day in daily
@@ -106,7 +127,19 @@ class DeepAnalysisEngine:
                 "tested_hypotheses": len(tested),
                 "validated_hypotheses": len(validated),
                 "validation_rate": round(len(validated) / len(tested), 4) if tested else 0.0,
-                "verified_patterns": sum(1 for item in patterns if item["samples"] >= 3),
+                "verified_patterns": len(core_patterns),
+                "core_patterns": len(core_patterns),
+                "core_tested_hypotheses": core_tested,
+                "core_validated_hypotheses": core_validated,
+                "core_validation_rate": (
+                    round(core_validated / core_tested, 4)
+                    if core_tested
+                    else 0.0
+                ),
+                "projection_ready": bool(
+                    current_pattern
+                    and current_pattern.get("usable_for_projection")
+                ),
                 "external_news_items": len(news or []),
             },
             "scenarios": scenarios,
@@ -169,15 +202,19 @@ class DeepAnalysisEngine:
                 for row in tested
                 if row[1].get("status") == "confirmed"
             ]
+            success_rate = len(confirmed) / len(tested)
             returns = [float(row[1].get("return_5d") or 0) for row in tested]
             prototype = days[-1]["pattern"]
+            quality_tier = _pattern_quality_tier(len(tested), success_rate)
             rows.append(
                 {
                     "pattern_id": pattern_id,
                     "name": prototype["name"],
                     "direction": prototype["direction"],
                     "samples": len(tested),
-                    "success_rate": round(len(confirmed) / len(tested), 4),
+                    "tested_count": len(tested),
+                    "validated_count": len(confirmed),
+                    "success_rate": round(success_rate, 4),
                     "avg_5d_return": round(sum(returns) / len(returns), 4),
                     "max_drawdown_median": round(_median([
                         float(row[1].get("max_drawdown_5d") or 0)
@@ -186,12 +223,14 @@ class DeepAnalysisEngine:
                     "evidence": prototype["evidence"],
                     "invalidation": prototype["invalidation"],
                     "last_seen": days[-1]["date"],
-                    "verdict": _pattern_verdict(len(tested), len(confirmed) / len(tested)),
+                    "quality_tier": quality_tier,
+                    "usable_for_projection": quality_tier == "core",
+                    "verdict": _pattern_verdict(len(tested), success_rate),
                 }
             )
         rows.sort(
             key=lambda row: (
-                row["samples"] >= 3,
+                row.get("usable_for_projection", False),
                 row["success_rate"],
                 abs(row["avg_5d_return"]),
             ),
@@ -218,6 +257,8 @@ class DeepAnalysisEngine:
             {},
         )
         expected = float(one_week.get("expected_return") or 0)
+        if not current_pattern or not current_pattern.get("usable_for_projection"):
+            return _low_confidence_scenarios(latest, current_pattern, expected)
         if current_pattern:
             success = float(current_pattern["success_rate"])
             pattern_return = float(current_pattern["avg_5d_return"])
@@ -458,13 +499,70 @@ def _validate_hypothesis(
 
 
 def _pattern_verdict(samples: int, success_rate: float) -> str:
-    if samples < 3:
+    tier = _pattern_quality_tier(samples, success_rate)
+    if tier == "insufficient":
         return "样本不足，仅观察"
-    if success_rate >= 0.66:
-        return "已验证优势模式"
-    if success_rate >= 0.54:
+    if tier == "core":
+        return "核心优势模式"
+    if tier == "watch":
         return "弱优势模式"
     return "暂不进入核心大脑"
+
+
+def _pattern_quality_tier(samples: int, success_rate: float) -> str:
+    if samples < WATCH_MIN_SAMPLES:
+        return "insufficient"
+    if samples >= CORE_MIN_SAMPLES and success_rate >= CORE_MIN_SUCCESS_RATE:
+        return "core"
+    if samples >= WATCH_MIN_SAMPLES and success_rate >= WATCH_MIN_SUCCESS_RATE:
+        return "watch"
+    return "rejected"
+
+
+def _low_confidence_scenarios(
+    latest: dict[str, Any],
+    current_pattern: dict[str, Any] | None,
+    expected_return: float,
+) -> list[dict[str, Any]]:
+    pattern_name = latest["pattern"]["name"]
+    if current_pattern:
+        reason = (
+            f"当前模式 {pattern_name} 样本 {current_pattern.get('samples', 0)}，"
+            f"历史成功率约 {float(current_pattern.get('success_rate') or 0) * 100:.0f}%，"
+            "未通过核心门槛，系统不把它作为主动推演依据。"
+        )
+    else:
+        reason = (
+            f"当前模式 {pattern_name} 尚无足够已验证样本，"
+            "未通过核心门槛，系统不把它作为主动推演依据。"
+        )
+    conditional = max(0.12, min(0.28, 0.18 + max(expected_return, 0) * 0.8))
+    risk = max(0.18, min(0.34, 0.20 + max(-expected_return, 0) * 1.2))
+    base = max(0.38, 1 - conditional - risk)
+    total = base + conditional + risk
+    return [
+        {
+            "name": "基础情景",
+            "probability": round(base / total, 4),
+            "direction": "低可信观望",
+            "reason": reason,
+            "trigger": latest["pattern"]["invalidation"],
+        },
+        {
+            "name": "条件情景",
+            "probability": round(conditional / total, 4),
+            "direction": "等待确认后再上修",
+            "reason": "只有重新出现核心优势模式，或放量突破后不跌回关键位，才进入主动推演。",
+            "trigger": "出现核心优势模式，且次日仍维持该结构。",
+        },
+        {
+            "name": "风险情景",
+            "probability": round(risk / total, 4),
+            "direction": "误判延续 / 下探",
+            "reason": "低质量模式下价格更容易否定推测，优先尊重失效条件。",
+            "trigger": latest["pattern"]["invalidation"],
+        },
+    ]
 
 
 def _news_by_day(news: list[NewsItem]) -> dict[str, list[NewsItem]]:

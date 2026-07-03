@@ -25,7 +25,9 @@ the web UI without explicit user direction.
   validating real behavior.
 - Deep analysis should present evidence-backed daily hypotheses and validation
   status, not unsupported one-shot certainty. The “super brain” is a pattern
-  library built from tested daily hypotheses.
+  library built from tested daily hypotheses. Future scenarios should only be
+  driven by core patterns; weak or rejected current patterns must downgrade the
+  forecast to low-confidence observation instead of pretending to predict.
 
 ## Recent system fixes
 

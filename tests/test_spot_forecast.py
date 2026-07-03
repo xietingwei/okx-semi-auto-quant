@@ -169,6 +169,9 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert "/api/deep-analysis?inst_id=" in html
     assert "function renderDeepAnalysis(analysis)" in html
     assert "superBrain:'超级大脑'" in html
+    assert "coreHitRate:'核心命中率'" in html
+    assert "notQualified:'未达标'" in html
+    assert "q.core_validation_rate" in html
     assert "data-detail-inst" in html
     assert "openPositionDetail(row.dataset.detailInst)" in html
     assert 'data-view="usStocks"' in html
