@@ -297,6 +297,111 @@ class DeepAnalysisEngine:
         ]
 
 
+def rank_deep_analyses(
+    forecasts: list[dict[str, Any]],
+    *,
+    max_days: int = 126,
+) -> dict[str, Any]:
+    days = max(20, min(max_days, 126))
+    engine = DeepAnalysisEngine()
+    ranked = []
+    skipped = []
+    for forecast in forecasts:
+        inst_id = str(forecast.get("inst_id") or "")
+        try:
+            analysis = engine.analyze(forecast, news=[], max_days=days)
+        except ValueError as exc:
+            skipped.append({"inst_id": inst_id, "error": str(exc)})
+            continue
+        ranked.append(_rank_row(forecast, analysis))
+    ranked.sort(key=_rank_sort_key, reverse=True)
+    for index, row in enumerate(ranked, start=1):
+        row["rank"] = index
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "days": days,
+        "total": len(ranked),
+        "ranked": ranked,
+        "skipped": skipped,
+    }
+
+
+def _rank_row(forecast: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
+    gate = analysis.get("quality_gate") or {}
+    scenario = (analysis.get("scenarios") or [{}])[0]
+    latest = (analysis.get("daily") or [{}])[0]
+    pattern = latest.get("pattern") or {}
+    brain = analysis.get("super_brain") or []
+    current_brain = next(
+        (item for item in brain if item.get("pattern_id") == pattern.get("id")),
+        {},
+    )
+    core_patterns = int(gate.get("core_patterns") or gate.get("verified_patterns") or 0)
+    projection_ready = bool(gate.get("projection_ready"))
+    if projection_ready:
+        status = "核心可推演"
+    elif core_patterns:
+        status = "有核心模式待触发"
+    else:
+        status = "低可信观察"
+    return {
+        "rank": 0,
+        "inst_id": analysis.get("inst_id") or forecast.get("inst_id"),
+        "symbol": analysis.get("symbol") or forecast.get("symbol"),
+        "market_type": analysis.get("market_type") or forecast.get("market_type"),
+        "data_source": analysis.get("data_source")
+        or forecast.get("data_source")
+        or forecast.get("quote_source"),
+        "current_price": forecast.get("current_price"),
+        "rank_score": round(_rank_score(gate), 2),
+        "status": status,
+        "projection_ready": projection_ready,
+        "core_patterns": core_patterns,
+        "core_validation_rate": float(gate.get("core_validation_rate") or 0),
+        "core_tested_hypotheses": int(gate.get("core_tested_hypotheses") or 0),
+        "validation_rate": float(gate.get("validation_rate") or 0),
+        "tested_hypotheses": int(gate.get("tested_hypotheses") or 0),
+        "current_pattern": pattern.get("name"),
+        "current_pattern_verdict": current_brain.get("verdict") or "样本不足，仅观察",
+        "scenario": scenario.get("name"),
+        "scenario_direction": scenario.get("direction"),
+        "scenario_probability": float(scenario.get("probability") or 0),
+    }
+
+
+def _rank_score(gate: dict[str, Any]) -> float:
+    core_rate = float(gate.get("core_validation_rate") or 0)
+    all_rate = float(gate.get("validation_rate") or 0)
+    core_tested = int(gate.get("core_tested_hypotheses") or 0)
+    tested = int(gate.get("tested_hypotheses") or 0)
+    core_patterns = int(gate.get("core_patterns") or gate.get("verified_patterns") or 0)
+    if gate.get("projection_ready"):
+        return (
+            core_rate * 70
+            + min(core_tested / 40, 1) * 20
+            + min(core_patterns / 3, 1) * 10
+        )
+    if core_patterns:
+        return (
+            core_rate * 45
+            + min(core_tested / 40, 1) * 15
+            + min(core_patterns / 3, 1) * 5
+        )
+    return all_rate * 25 + min(tested / 100, 1) * 5
+
+
+def _rank_sort_key(row: dict[str, Any]) -> tuple:
+    return (
+        bool(row["projection_ready"]),
+        int(row["core_patterns"]) > 0,
+        float(row["core_validation_rate"]),
+        int(row["core_tested_hypotheses"]),
+        float(row["validation_rate"]),
+        int(row["tested_hypotheses"]),
+        float(row["rank_score"]),
+    )
+
+
 def fetch_deep_news(inst_id: str, limit: int = 12) -> list[NewsItem]:
     return YahooNewsClient().latest_news(inst_id, limit=limit)
 

@@ -51,6 +51,7 @@ QIS is designed around four principles:
 | Opportunity radar | Ranks crypto, external US-stock daily data, and optional OKX stock-mapped instruments using calibrated multi-horizon forecasts |
 | Strategy desk | Compares adaptive, trend-following, breakout-confirmation, and mean-reversion models |
 | Deep analysis | Reviews up to six months of daily candles, explains each day with quantitative facts and news context, validates the hypotheses, and summarizes repeatable patterns into a super brain |
+| Deep ranking | Ranks all symbols by core deep-analysis hit rate, sample depth, and projection readiness |
 | Live-price forecasting | Recalculates features, probability, return, and target from the latest OKX ticker |
 | Market context | Uses order-book depth, funding, open interest, volume structure, macro data, and market breadth |
 | Position sentinel | Suggests dynamic stops, profit protection, reductions, and exit timing for manually registered positions |

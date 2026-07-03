@@ -45,6 +45,7 @@ scripts/start.sh
   │    ├─ serves http://127.0.0.1:8787/
   │    ├─ exposes /api/spot/positions, /buy, /sell, /delete
   │    ├─ exposes /api/deep-analysis for selected-symbol daily reviews
+  │    ├─ exposes /api/deep-analysis/rank for all-symbol reliability ranking
   │    └─ streams /api/assistant/stream
   └─ python3 -m qis doctor
 ```

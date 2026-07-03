@@ -8,7 +8,7 @@ import threading
 import time
 from urllib.parse import parse_qs, urlparse
 
-from qis.deep_analysis import DeepAnalysisEngine, fetch_deep_news
+from qis.deep_analysis import DeepAnalysisEngine, fetch_deep_news, rank_deep_analyses
 from qis.decision_assistant import (
     DecisionAssistant,
     DecisionAssistantError,
@@ -141,6 +141,20 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                     ],
                 }
             )
+            return
+        if path == "/api/deep-analysis/rank":
+            query = parse_qs(urlparse(self.path).query)
+            try:
+                days = int((query.get("days") or ["126"])[0])
+            except ValueError:
+                self._json({"ok": False, "error": "invalid days"}, 400)
+                return
+            forecasts = self._live_forecasts()
+            ranking = rank_deep_analyses(
+                list(forecasts.values()),
+                max_days=days,
+            )
+            self._json({"ok": True, "ranking": ranking})
             return
         if path == "/api/deep-analysis":
             query = parse_qs(urlparse(self.path).query)

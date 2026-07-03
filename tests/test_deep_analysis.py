@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from qis.deep_analysis import DeepAnalysisEngine, NewsItem
+from qis.deep_analysis import DeepAnalysisEngine, NewsItem, rank_deep_analyses
 
 
 def _forecast(count: int = 150) -> dict:
@@ -44,6 +44,36 @@ def _forecast(count: int = 150) -> dict:
                 "up_probability": 0.62,
             }
         ],
+    }
+
+
+def _low_confidence_forecast(count: int = 150) -> dict:
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    price = 100.0
+    history = []
+    for index in range(count):
+        drift = 0.04 if index % 10 == 0 else -0.03 if index % 10 == 5 else 0.0
+        open_price = price
+        price *= 1 + drift
+        history.append(
+            {
+                "date": (start + timedelta(days=index)).date().isoformat(),
+                "open": open_price,
+                "high": max(open_price, price) * 1.002,
+                "low": min(open_price, price) * 0.998,
+                "close": price,
+                "volume": 1000 + (500 if abs(drift) > 0.02 else 0),
+            }
+        )
+
+    return {
+        "inst_id": "NOISE-USDT",
+        "symbol": "NOISE",
+        "market_type": "现货",
+        "data_source": "Synthetic daily",
+        "current_price": price,
+        "history": history,
+        "forecasts": [{"key": "1w", "expected_return": 0.02}],
     }
 
 
@@ -139,3 +169,21 @@ def test_low_quality_current_pattern_downgrades_future_scenarios() -> None:
     assert scenarios[0]["direction"] == "低可信观望"
     assert scenarios[0]["probability"] > scenarios[1]["probability"]
     assert "未通过核心门槛" in scenarios[0]["reason"]
+
+
+def test_rank_deep_analyses_prioritizes_projection_ready_symbols() -> None:
+    ranking = rank_deep_analyses(
+        [_low_confidence_forecast(), _forecast()],
+        max_days=80,
+    )
+
+    rows = ranking["ranked"]
+
+    assert [row["rank"] for row in rows] == [1, 2]
+    assert rows[0]["inst_id"] == "NVDA-USDT"
+    assert rows[0]["projection_ready"] is True
+    assert rows[0]["core_validation_rate"] >= 0.6
+    assert rows[0]["rank_score"] > rows[1]["rank_score"]
+    assert rows[1]["inst_id"] == "NOISE-USDT"
+    assert rows[1]["status"] == "低可信观察"
+    assert rows[1]["core_patterns"] == 0

@@ -1,7 +1,59 @@
 import pytest
 from datetime import datetime, timedelta, timezone
 
-from qis.web_server import _rebase_forecast, _rebase_forecast_prices
+from qis.web_server import QisRequestHandler, _rebase_forecast, _rebase_forecast_prices
+
+
+def _rank_route_forecast() -> dict:
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    price = 100.0
+    history = []
+    for index in range(120):
+        open_price = price
+        price *= 1.004
+        history.append(
+            {
+                "date": (start + timedelta(days=index)).date().isoformat(),
+                "open": open_price,
+                "high": price * 1.006,
+                "low": open_price * 0.994,
+                "close": price,
+                "volume": 1000 + index,
+            }
+        )
+    return {
+        "inst_id": "RANK-USDT",
+        "symbol": "RANK",
+        "market_type": "现货",
+        "current_price": price,
+        "history": history,
+        "forecasts": [{"key": "1w", "expected_return": 0.03}],
+    }
+
+
+def test_deep_analysis_rank_route_returns_ranked_payload(monkeypatch) -> None:
+    handler = QisRequestHandler.__new__(QisRequestHandler)
+    handler.path = "/api/deep-analysis/rank?days=80"
+    payloads = []
+
+    monkeypatch.setattr(
+        QisRequestHandler,
+        "_live_forecasts",
+        lambda self: {"RANK-USDT": _rank_route_forecast()},
+    )
+    monkeypatch.setattr(
+        QisRequestHandler,
+        "_json",
+        lambda self, payload, status=200: payloads.append((status, payload)),
+    )
+
+    QisRequestHandler.do_GET(handler)
+
+    status, payload = payloads[0]
+    assert status == 200
+    assert payload["ok"] is True
+    assert payload["ranking"]["ranked"][0]["inst_id"] == "RANK-USDT"
+    assert payload["ranking"]["ranked"][0]["rank"] == 1
 
 
 def test_rebase_forecast_uses_latest_price_for_all_price_targets() -> None:

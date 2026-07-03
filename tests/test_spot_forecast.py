@@ -172,6 +172,11 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert "coreHitRate:'核心命中率'" in html
     assert "notQualified:'未达标'" in html
     assert "q.core_validation_rate" in html
+    assert 'id="deepRankBtn"' in html
+    assert 'id="deepRankDialog"' in html
+    assert "/api/deep-analysis/rank?days=126" in html
+    assert "function renderDeepRank" in html
+    assert "deepRank:'全部深度分析'" in html
     assert "data-detail-inst" in html
     assert "openPositionDetail(row.dataset.detailInst)" in html
     assert 'data-view="usStocks"' in html

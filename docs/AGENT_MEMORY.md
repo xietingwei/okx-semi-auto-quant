@@ -46,6 +46,10 @@ the web UI without explicit user direction.
   `GET /api/deep-analysis`. It reviews up to 126 recent daily candles, attaches
   external news when available, validates each hypothesis on later price action,
   and summarizes repeated patterns as the super-brain mode library.
+- The opportunity radar has an “全部深度分析 / All Deep Analysis” ranking action
+  backed by `GET /api/deep-analysis/rank`. Ranking is reliability-first:
+  projection-ready symbols with core patterns outrank weak or rejected patterns;
+  do not rank raw all-sample hit rate ahead of core validation quality.
 
 ## Key API endpoints
 
@@ -55,6 +59,7 @@ the web UI without explicit user direction.
 | `/api/spot/quotes` | `GET` | Returns live-rebased opportunity radar forecasts. |
 | `/api/spot/candles` | `GET` | Returns OKX candles for the selected instrument and bar. |
 | `/api/deep-analysis` | `GET` | Returns selected-symbol daily reviews, hypothesis validations, scenarios, and super-brain patterns. |
+| `/api/deep-analysis/rank` | `GET` | Ranks all cached symbols by deep-analysis reliability, core validation rate, and sample depth. |
 | `/api/spot/buy` | `POST` | Opens a manual spot position record. |
 | `/api/spot/sell` | `POST` | Closes a manual spot position record with realized PnL. |
 | `/api/spot/delete` | `POST` | Permanently deletes a manual spot position record. |
