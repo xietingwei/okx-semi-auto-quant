@@ -1,6 +1,6 @@
 # Agent memory for QIS handoff
 
-Last updated: 2026-07-03.
+Last updated: 2026-07-06.
 
 ## Product intent
 
@@ -56,6 +56,12 @@ the web UI without explicit user direction.
   backed by `GET /api/deep-analysis/rank`. Ranking is reliability-first:
   projection-ready symbols with core patterns outrank weak or rejected patterns;
   do not rank raw all-sample hit rate ahead of core validation quality.
+- Shadow Neural Brain v1 is implemented as a dependency-free, pure-Python
+  shadow learner in `qis/ml_shadow.py`. `spot-watch` attaches `shadow_brain`
+  payloads to cached forecasts; `GET /api/shadow-brain/rank` returns the cached
+  reliability ranking; deep-analysis output includes the selected asset's
+  shadow payload. It is shadow-only and must not replace manual trade decisions
+  or trigger automatic orders.
 
 ## Key API endpoints
 
@@ -66,6 +72,7 @@ the web UI without explicit user direction.
 | `/api/spot/candles` | `GET` | Returns OKX candles for the selected instrument and bar. |
 | `/api/deep-analysis` | `GET` | Returns selected-symbol daily reviews, hypothesis validations, scenarios, and super-brain patterns. |
 | `/api/deep-analysis/rank` | `GET` | Ranks all cached symbols by deep-analysis reliability, core validation rate, and sample depth. |
+| `/api/shadow-brain/rank` | `GET` | Ranks cached symbols by shadow neural validation edge, confidence, and projection gate. |
 | `/api/spot/buy` | `POST` | Opens a manual spot position record. |
 | `/api/spot/sell` | `POST` | Closes a manual spot position record with realized PnL. |
 | `/api/spot/delete` | `POST` | Permanently deletes a manual spot position record. |

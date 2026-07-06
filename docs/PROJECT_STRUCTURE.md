@@ -25,6 +25,7 @@ because the launch scripts and generated dashboard paths are deliberately simple
 | `qis/spot_dashboard.py` | Source template for `data/index.html`; edit this file, not generated HTML. |
 | `qis/storage.py` | SQLite schema and persistence helpers for positions, manual trades, forecast evaluations, and learning runs. |
 | `qis/spot_forecast.py` | Spot forecast model, strategy variants, opportunity scoring, and model versioning. |
+| `qis/ml_shadow.py` | Dependency-free shadow neural learner, validation gate, and all-asset shadow ranking. |
 | `qis/deep_analysis.py` | Per-symbol daily deep analysis, hypothesis validation, and super-brain pattern summaries. |
 | `qis/position_risk.py` | Holding-level sentinel analysis: stops, target distance, risk score, and sell timing. |
 | `qis/decision_assistant.py` | OpenAI-compatible LLM request/streaming and decision-context construction. |
@@ -39,6 +40,7 @@ because the launch scripts and generated dashboard paths are deliberately simple
 scripts/start.sh
   ├─ python3 -m qis spot-watch
   │    ├─ fetches OKX/public market data
+  │    ├─ attaches shadow neural predictions to cached forecasts
   │    ├─ writes data/spot_forecasts.json
   │    └─ renders data/index.html from qis/spot_dashboard.py
   ├─ python3 -m qis web
@@ -46,6 +48,7 @@ scripts/start.sh
   │    ├─ exposes /api/spot/positions, /buy, /sell, /delete
   │    ├─ exposes /api/deep-analysis for selected-symbol daily reviews
   │    ├─ exposes /api/deep-analysis/rank for all-symbol reliability ranking
+  │    ├─ exposes /api/shadow-brain/rank for shadow neural reliability ranking
   │    └─ streams /api/assistant/stream
   └─ python3 -m qis doctor
 ```

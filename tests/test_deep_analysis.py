@@ -113,6 +113,20 @@ def test_deep_analysis_accepts_six_month_daily_window() -> None:
     assert result["quality_gate"]["daily_coverage"] == 180
 
 
+def test_deep_analysis_includes_shadow_brain_payload() -> None:
+    forecast = _forecast()
+    forecast["shadow_brain"] = {
+        "status": "shadow_running",
+        "projection_gate": "watch",
+        "confidence": 0.42,
+    }
+
+    result = DeepAnalysisEngine().analyze(forecast, max_days=80)
+
+    assert result["shadow_brain"]["status"] == "shadow_running"
+    assert result["shadow_brain"]["projection_gate"] == "watch"
+
+
 def test_deep_analysis_rejects_short_history() -> None:
     forecast = _forecast(count=20)
 

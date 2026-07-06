@@ -26,6 +26,7 @@ from qis.okx import OkxClient, OkxError
 from qis.position_risk import analyze_position
 from qis.spot_dashboard import render_spot_dashboard_cache
 from qis.spot_forecast import FORECAST_HISTORY_LIMIT, SpotForecastEngine
+from qis.ml_shadow import rank_shadow_brains
 from qis.storage import Storage
 
 
@@ -162,6 +163,11 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                 ],
                 max_days=days,
             )
+            self._json({"ok": True, "ranking": ranking})
+            return
+        if path == "/api/shadow-brain/rank":
+            forecasts = self._live_forecasts()
+            ranking = rank_shadow_brains(list(forecasts.values()))
             self._json({"ok": True, "ranking": ranking})
             return
         if path == "/api/deep-analysis":

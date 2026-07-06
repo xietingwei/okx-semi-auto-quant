@@ -123,6 +123,7 @@ class DeepAnalysisEngine:
             "data_source": forecast.get("data_source") or forecast.get("quote_source"),
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "range_days": len(daily),
+            "shadow_brain": forecast.get("shadow_brain") or {},
             "quality_gate": {
                 "daily_coverage": len(daily),
                 "tested_hypotheses": len(tested),

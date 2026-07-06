@@ -27,6 +27,7 @@ from qis.runner import Runner
 from qis.storage import Storage
 from qis.spot_dashboard import render_spot_dashboard
 from qis.spot_forecast import SpotForecastEngine
+from qis.ml_shadow import attach_shadow_brain
 from qis.strategy import DonchianBreakoutStrategy
 from qis.us_stocks import YahooFinanceClient, UsStockError, UsStockHistory
 from qis.web_server import serve
@@ -238,6 +239,7 @@ def _render_spot(settings, output: Path) -> None:
         adjustments,
         advice,
     )
+    calibrated_forecasts = attach_shadow_brain(calibrated_forecasts)
     path = render_spot_dashboard(calibrated_forecasts, output)
     print(f"Spot dashboard written to {path.resolve()} ({len(forecasts)} assets)", flush=True)
     try:
