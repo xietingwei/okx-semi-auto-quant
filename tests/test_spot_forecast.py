@@ -189,9 +189,12 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert "deepRank:'全部深度分析'" in html
     assert 'id="shadowRankBtn"' in html
     assert 'id="shadowRankDialog"' in html
+    assert 'id="shadowSummary"' in html
     assert "/api/shadow-brain/rank" in html
     assert "function renderShadowBrain" in html
+    assert "function renderShadowSummary" in html
     assert "shadowBrain:'神经网络影子大脑'" in html
+    assert "shadowCoverage:'影子覆盖'" in html
     assert "data-detail-inst" in html
     assert "openPositionDetail(row.dataset.detailInst)" in html
     assert 'data-view="usStocks"' in html
