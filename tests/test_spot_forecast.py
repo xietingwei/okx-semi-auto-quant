@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import json
+from pathlib import Path
 
 import pytest
 
@@ -22,6 +23,52 @@ def _daily_candles(count: int = 320) -> list[Candle]:
                 low=price * 0.988,
                 close=price,
                 volume=1000 + index,
+            )
+        )
+    return candles
+
+
+def _rebound_candidate_candles(count: int = 260) -> list[Candle]:
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    candles = []
+    price = 100.0
+    for index in range(count):
+        if index < count - 36:
+            price *= 1.0025
+        elif index < count - 24:
+            price *= 0.975
+        else:
+            price *= 1.006
+        volume = 1000 + index * 2
+        if index >= count - 36:
+            volume *= 1.45
+        candles.append(
+            Candle(
+                ts=start + timedelta(days=index),
+                open=price * 0.992,
+                high=price * 1.018,
+                low=price * 0.982,
+                close=price,
+                volume=volume,
+            )
+        )
+    return candles
+
+
+def _breakdown_candles(count: int = 260) -> list[Candle]:
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    candles = []
+    price = 160.0
+    for index in range(count):
+        price *= 0.997 if index < count - 30 else 0.988
+        candles.append(
+            Candle(
+                ts=start + timedelta(days=index),
+                open=price * 1.012,
+                high=price * 1.018,
+                low=price * 0.978,
+                close=price,
+                volume=1400 + index,
             )
         )
     return candles
@@ -82,6 +129,50 @@ def test_risk_contraction_blocks_normal_buy_decision() -> None:
     assert forecast is not None
     assert forecast.decision != "分批关注买入"
     assert 0 <= forecast.opportunity_score <= 100
+
+
+def test_rebound_candidate_scores_recent_pullback_with_support() -> None:
+    forecast = SpotForecastEngine().analyze(
+        "BTC-USDT",
+        _rebound_candidate_candles(),
+        market_context={
+            "volume_score": 0.65,
+            "market_environment_score": 0.12,
+            "market_environment_label": "过渡震荡",
+        },
+    )
+
+    assert forecast is not None
+    assert forecast.rebound_score >= 65
+    assert forecast.decision == "跌后反弹候选"
+    assert forecast.factors["rebound"] == "强反弹候选"
+    assert "高点折价" in forecast.factors["discount"]
+
+
+def test_rebound_score_rejects_breakdown_as_bottom_fishing() -> None:
+    forecast = SpotForecastEngine().analyze(
+        "BTC-USDT",
+        _breakdown_candles(),
+        market_context={
+            "volume_score": -0.45,
+            "market_environment_score": -0.35,
+            "market_environment_label": "风险收缩",
+        },
+    )
+
+    assert forecast is not None
+    assert forecast.rebound_score <= 35
+    assert forecast.decision == "破位风险，暂不抄底"
+    assert forecast.factors["rebound"] == "破位风险"
+
+
+def test_low_rebound_score_does_not_mark_clean_uptrend_as_breakdown() -> None:
+    forecast = SpotForecastEngine().analyze("BTC-USDT", _daily_candles())
+
+    assert forecast is not None
+    assert forecast.rebound_score <= 40
+    assert forecast.decision != "破位风险，暂不抄底"
+    assert forecast.factors["rebound"] != "破位风险"
 
 
 def test_strategy_never_recommends_buy_below_70_score() -> None:
@@ -208,9 +299,22 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert 'data-radar-strategy="trend"' in html
     assert 'data-radar-strategy="breakout"' in html
     assert 'data-radar-strategy="mean_reversion"' in html
+    assert "reboundPotential:'反弹潜力'" in html
+    assert "factorRebound:'反弹结构'" in html
+    assert "sort==='rebound'" in html
     assert "strategyView(x,selectedRadarStrategy)" in html
     assert "<small>${x.strategy?.name||strategyNames[selectedRadarStrategy]}</small>" not in html
     assert "/api/assistant/stream" in html
     assert "/api/spot/delete" in html
     assert "deletePosition" in html
     assert "deleteConfirm" in html
+
+
+def test_start_script_preloads_latest_dashboard_before_services() -> None:
+    script = Path("scripts/start.sh").read_text(encoding="utf-8")
+
+    assert "预加载最新行情与仪表盘" in script
+    assert "QIS_PRELOAD_TIMEOUT_SECONDS" in script
+    assert "timeout=timeout_seconds" in script
+    assert '"-m", "qis", "spot-dashboard", "--out"' in script
+    assert script.index("spot-dashboard") < script.index("启动现货预测刷新")

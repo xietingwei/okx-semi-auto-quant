@@ -6,6 +6,7 @@ DATA_DIR="$ROOT_DIR/data"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 WEB_HOST="${QIS_WEB_HOST:-127.0.0.1}"
 WEB_PORT="${QIS_WEB_PORT:-8787}"
+PRELOAD_TIMEOUT_SECONDS="${QIS_PRELOAD_TIMEOUT_SECONDS:-180}"
 
 mkdir -p "$DATA_DIR"
 cd "$ROOT_DIR"
@@ -46,7 +47,32 @@ print(process.pid)
 PY
 }
 
-echo "[1/3] 启动现货预测刷新"
+echo "[1/4] 预加载最新行情与仪表盘"
+if "$PYTHON_BIN" - "$PYTHON_BIN" "$PRELOAD_TIMEOUT_SECONDS" "$DATA_DIR/index.html" <<'PY'
+import subprocess
+import sys
+
+python_bin = sys.argv[1]
+timeout_seconds = int(sys.argv[2])
+output = sys.argv[3]
+try:
+    completed = subprocess.run(
+        [python_bin, "-m", "qis", "spot-dashboard", "--out", output],
+        timeout=timeout_seconds,
+        check=False,
+    )
+except subprocess.TimeoutExpired:
+    print(f"预加载超过 {timeout_seconds} 秒，跳过本次同步刷新")
+    sys.exit(124)
+sys.exit(completed.returncode)
+PY
+then
+  echo "最新行情与仪表盘已加载"
+else
+  echo "预加载失败，将使用已有缓存并由后台继续刷新"
+fi
+
+echo "[2/4] 启动现货预测刷新"
 if is_running "$DATA_DIR/spot-watch.pid"; then
   echo "现货预测已运行，PID $(cat "$DATA_DIR/spot-watch.pid")"
 else
@@ -56,7 +82,7 @@ else
   echo "现货预测已启动，PID $pid"
 fi
 
-echo "[2/3] 启动现货决策台与交易登记 API"
+echo "[3/4] 启动现货决策台与交易登记 API"
 if is_running "$DATA_DIR/web.pid"; then
   echo "网页服务已运行，PID $(cat "$DATA_DIR/web.pid")"
 else
@@ -66,7 +92,7 @@ else
   echo "网页服务已启动，PID $pid"
 fi
 
-echo "[3/3] 后台运行系统自检"
+echo "[4/4] 后台运行系统自检"
 if is_running "$DATA_DIR/doctor.pid"; then
   echo "系统自检正在运行，PID $(cat "$DATA_DIR/doctor.pid")"
 else

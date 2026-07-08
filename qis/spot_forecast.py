@@ -75,6 +75,7 @@ class SpotForecast:
     forecasts: list[HorizonForecast]
     history: list[dict[str, float | str]]
     opportunity_score: int
+    rebound_score: int
     decision: str
     buy_zone_low: float
     buy_zone_high: float
@@ -146,11 +147,18 @@ class SpotForecastEngine:
         buy_zone_high = current + atr * 0.15
         invalidation = current - atr * 1.8
         opportunity_score = score_opportunity(forecasts, volatility)
+        rebound_score, rebound_factors = self._rebound_profile(
+            feature_closes,
+            forecasts,
+            volatility,
+            market_context or {},
+        )
         decision = decide_strategy(
             forecasts,
             opportunity_score,
             float((market_context or {}).get("market_environment_score", 0.0)),
         )
+        decision = refine_rebound_decision(decision, forecasts, rebound_score)
         positive = sum(1 for item in forecasts if item.expected_return > 0)
         history = [
             {
@@ -174,6 +182,7 @@ class SpotForecastEngine:
             "volume_flow": self._factor_label((market_context or {}).get("volume_score", 0.0)),
             "macro": self._factor_label((market_context or {}).get("macro_score", 0.0)),
             "market_environment": str((market_context or {}).get("market_environment_label", "过渡震荡")),
+            **rebound_factors,
         }
         return SpotForecast(
             model_version=FORECAST_MODEL_VERSION,
@@ -193,6 +202,7 @@ class SpotForecastEngine:
             forecasts=forecasts,
             history=history,
             opportunity_score=opportunity_score,
+            rebound_score=rebound_score,
             decision=decision,
             buy_zone_low=buy_zone_low,
             buy_zone_high=buy_zone_high,
@@ -237,7 +247,9 @@ class SpotForecastEngine:
                 "market_context": row["market_context"],
                 "forecasts": row["forecasts"],
                 "opportunity_score": row["opportunity_score"],
+                "rebound_score": row["rebound_score"],
                 "decision": row["decision"],
+                "factors": row["factors"],
             })
         return rows
 
@@ -424,6 +436,85 @@ class SpotForecastEngine:
         score = sum(weight * max(-1.0, min(1.0, value)) for weight, value in zip(weights, values))
         return score, score * max_delta
 
+    @classmethod
+    def _rebound_profile(
+        cls,
+        closes: list[float],
+        forecasts: list[HorizonForecast],
+        volatility: float,
+        market_context: dict,
+    ) -> tuple[int, dict[str, str]]:
+        current = closes[-1]
+        window_30 = closes[-30:]
+        window_60 = closes[-60:]
+        high_60 = max(window_60)
+        low_30 = min(window_30)
+        ma20 = mean(closes[-20:])
+        momentum_7 = current / closes[-8] - 1 if len(closes) >= 8 else 0.0
+        discount_from_high = max(0.0, high_60 / current - 1)
+        ma_discount = max(0.0, ma20 / current - 1)
+        distance_from_low = current / low_30 - 1 if low_30 > 0 else 0.0
+        by_key = {item.key: item for item in forecasts}
+        month = by_key.get("1m")
+        quarter = by_key.get("3m")
+        month_return = month.expected_return if month else 0.0
+        quarter_return = quarter.expected_return if quarter else 0.0
+        month_probability = month.up_probability if month else 0.5
+        volume_score = max(-1.0, min(1.0, float(market_context.get("volume_score", 0.0))))
+        environment_score = max(
+            -1.0,
+            min(1.0, float(market_context.get("market_environment_score", 0.0))),
+        )
+        pullback_quality = (
+            min(discount_from_high / 0.18, 1.0) * 28
+            + min(ma_discount / 0.08, 1.0) * 8
+        )
+        support_quality = (
+            min(max(distance_from_low - 0.015, 0.0) / 0.08, 1.0) * 18
+            + min(max(momentum_7, 0.0) / 0.04, 1.0) * 12
+        )
+        forecast_quality = (
+            cls._clip((month_return + 0.08) / 0.18, 0.0, 1.0) * 10
+            + cls._clip((month_probability - 0.38) / 0.30, 0.0, 1.0) * 6
+            + cls._clip((quarter_return + 0.10) / 0.24, 0.0, 1.0) * 6
+        )
+        context_quality = 12 + volume_score * 7 + environment_score * 6
+        breakdown_penalty = 0.0
+        if distance_from_low < 0.018:
+            breakdown_penalty += 22
+        if month_return < 0:
+            breakdown_penalty += min(20.0, abs(month_return) / 0.15 * 20)
+        if quarter_return < -0.12:
+            breakdown_penalty += min(10.0, abs(quarter_return + 0.12) / 0.18 * 10)
+        breakdown_penalty += min(10.0, max(0.0, volatility - 0.045) * 180)
+        raw_score = (
+            pullback_quality
+            + support_quality
+            + forecast_quality
+            + context_quality
+            - breakdown_penalty
+        )
+        score = round(cls._clip(raw_score, 0.0, 100.0))
+        breakdown_risk = distance_from_low < 0.018 or month_return < 0
+        if score >= 65:
+            rebound_label = "强反弹候选"
+        elif score >= 50:
+            rebound_label = "等待企稳"
+        elif score <= 35 and breakdown_risk:
+            rebound_label = "破位风险"
+        else:
+            rebound_label = "普通回撤"
+        support_label = (
+            f"低点上方 {distance_from_low * 100:.1f}%"
+            if distance_from_low >= 0.018
+            else "贴近30日低点"
+        )
+        return score, {
+            "rebound": rebound_label,
+            "discount": f"60日高点折价 {discount_from_high * 100:.1f}%",
+            "stabilization": support_label,
+        }
+
     @staticmethod
     def _agreement(trend: float, momentum: float) -> float:
         if trend == 0 or momentum == 0:
@@ -546,6 +637,28 @@ def decide_strategy(
     if score < 45 or positive <= 1:
         return "等待趋势企稳"
     return "中性观察"
+
+
+def refine_rebound_decision(
+    decision: str,
+    forecasts: list[HorizonForecast] | list[dict],
+    rebound_score: int,
+) -> str:
+    by_key = {str(_value(item, "key")): item for item in forecasts}
+    month = by_key.get("1m")
+    month_return = float(_value(month, "expected_return")) if month else 0.0
+    month_probability = float(_value(month, "up_probability")) if month else 0.5
+    if rebound_score <= 35 and (month_return < 0 or month_probability <= 0.42):
+        return "破位风险，暂不抄底"
+    if (
+        rebound_score >= 65
+        and month_return > 0
+        and month_probability >= 0.54
+    ):
+        return "跌后反弹候选"
+    if rebound_score >= 55 and decision in {"等待趋势企稳", "中性观察"}:
+        return "等待企稳确认"
+    return decision
 
 
 def _value(item: HorizonForecast | dict, key: str):
