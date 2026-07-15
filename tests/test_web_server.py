@@ -67,6 +67,30 @@ def _route_forecast(
     }
 
 
+def test_positions_route_returns_only_decision_payload(monkeypatch) -> None:
+    handler = QisRequestHandler.__new__(QisRequestHandler)
+    handler.path = "/api/spot/positions"
+    payloads = []
+
+    class StubStorage:
+        @staticmethod
+        def spot_positions():
+            return []
+
+    handler.storage = StubStorage()
+    monkeypatch.setattr(QisRequestHandler, "_position_forecasts", lambda self, rows: {})
+    monkeypatch.setattr(QisRequestHandler, "_position_analyses", lambda self, rows, forecasts: [])
+    monkeypatch.setattr(
+        QisRequestHandler,
+        "_json",
+        lambda self, payload, status=200: payloads.append((status, payload)),
+    )
+
+    QisRequestHandler.do_GET(handler)
+
+    assert payloads == [(200, {"positions": [], "analyses": []})]
+
+
 def test_deep_analysis_rank_route_returns_ranked_payload(monkeypatch) -> None:
     handler = QisRequestHandler.__new__(QisRequestHandler)
     handler.path = "/api/deep-analysis/rank?days=80"
@@ -90,44 +114,6 @@ def test_deep_analysis_rank_route_returns_ranked_payload(monkeypatch) -> None:
     assert payload["ok"] is True
     assert payload["ranking"]["ranked"][0]["inst_id"] == "RANK-USDT"
     assert payload["ranking"]["ranked"][0]["rank"] == 1
-
-
-def test_shadow_brain_rank_route_returns_cached_ranking(monkeypatch) -> None:
-    handler = QisRequestHandler.__new__(QisRequestHandler)
-    handler.path = "/api/shadow-brain/rank"
-    payloads = []
-    forecast = _rank_route_forecast()
-    forecast["shadow_brain"] = {
-        "status": "shadow_running",
-        "direction": "up",
-        "projection_gate": "watch",
-        "up_probability": 0.58,
-        "confidence": 0.42,
-        "expected_return_5d": 0.015,
-        "validation_accuracy": 0.56,
-        "edge": 0.04,
-        "samples": 90,
-        "reason": "影子运行",
-    }
-
-    monkeypatch.setattr(
-        QisRequestHandler,
-        "_live_forecasts",
-        lambda self: {"RANK-USDT": forecast},
-    )
-    monkeypatch.setattr(
-        QisRequestHandler,
-        "_json",
-        lambda self, payload, status=200: payloads.append((status, payload)),
-    )
-
-    QisRequestHandler.do_GET(handler)
-
-    status, payload = payloads[0]
-    assert status == 200
-    assert payload["ok"] is True
-    assert payload["ranking"]["model_version"] == "shadow_mlp_v1"
-    assert payload["ranking"]["ranked"][0]["inst_id"] == "RANK-USDT"
 
 
 def test_deep_analysis_route_prefers_long_external_stock_history(monkeypatch) -> None:

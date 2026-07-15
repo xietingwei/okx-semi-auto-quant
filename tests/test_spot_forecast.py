@@ -254,12 +254,16 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
 
     assert rendered == output
     html = output.read_text(encoding="utf-8")
-    assert "assistantTopButton" in html
+    assert "direction:'方向'" in html
+    assert "upProbability:'上涨概率'" in html
+    assert "downProbability:'下跌概率'" in html
+    assert "futureTrend:'未来走势'" in html
+    assert "tradingVolume:'成交量'" in html
+    assert 'id="volumeRatio"' in html
+    assert 'id="decisionChart"' in html
+    assert "function drawDecisionChart" in html
+    assert "volume-bar" in html
     assert "exitLevels:'卖出价格'" in html
-    assert "strategyNames[selectedRadarStrategy]" not in html
-    assert ".message.ai{" in html
-    assert "role==='assistant'?'ai':role" in html
-    assert ".message.assistant{" not in html
     assert 'data-frame="1H"' in html
     assert 'id="chartTooltip"' in html
     assert "function bindChartHover(points)" in html
@@ -268,46 +272,35 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert 'id="deepDialog"' in html
     assert "/api/deep-analysis?inst_id=" in html
     assert "function renderDeepAnalysis(analysis)" in html
-    assert "superBrain:'超级大脑'" in html
     assert "coreHitRate:'核心命中率'" in html
     assert "notQualified:'未达标'" in html
-    assert "q.core_validation_rate" in html
+    assert "quality.core_validation_rate" in html
     assert 'id="deepRankBtn"' in html
     assert 'id="deepRankDialog"' in html
-    assert "/api/deep-analysis?inst_id=${encodeURIComponent(inst)}&days=180" in html
+    assert "'/api/deep-analysis?inst_id='+encodeURIComponent(asset.inst_id)+'&days=180'" in html
     assert "/api/deep-analysis/rank?days=180" in html
     assert "function renderDeepRank" in html
-    assert "deepRank:'全部深度分析'" in html
-    assert 'id="shadowRankBtn"' in html
-    assert 'id="shadowRankDialog"' in html
-    assert 'id="shadowSummary"' in html
-    assert "/api/shadow-brain/rank" in html
-    assert "function renderShadowBrain" in html
-    assert "function renderShadowSummary" in html
-    assert "shadowBrain:'神经网络影子大脑'" in html
-    assert "shadowCoverage:'影子覆盖'" in html
+    assert "deepRank:'深度分析排名'" in html
     assert "data-detail-inst" in html
     assert "openPositionDetail(row.dataset.detailInst)" in html
     assert 'data-view="usStocks"' in html
-    assert "messages.zh.usStockOpportunities='美股机会'" in html
-    assert "location.hash=radarView==='usStocks'?'us-stocks':'opportunity'" in html
+    assert "usStockOpportunities:'美股机会'" in html
+    assert "location.hash=name==='usStocks'?'us-stocks':'opportunity'" in html
     assert "radarScope==='usStocks'?'equity':$('radarMarket').value" in html
-    assert "sourceLine=x=>[x.data_source||x.quote_source,x.trade_platform]" in html
+    assert "exchange=x.exchange&&!String(source).includes(x.exchange)?x.exchange:''" in html
     assert "美股现货':'US Stock" in html
-    assert 'data-scope="global"' in html
-    assert 'data-radar-strategy="adaptive"' in html
-    assert 'data-radar-strategy="trend"' in html
-    assert 'data-radar-strategy="breakout"' in html
-    assert 'data-radar-strategy="mean_reversion"' in html
     assert "reboundPotential:'反弹潜力'" in html
     assert "factorRebound:'反弹结构'" in html
     assert "sort==='rebound'" in html
-    assert "strategyView(x,selectedRadarStrategy)" in html
-    assert "<small>${x.strategy?.name||strategyNames[selectedRadarStrategy]}</small>" not in html
-    assert "/api/assistant/stream" in html
     assert "/api/spot/delete" in html
     assert "deletePosition" in html
     assert "deleteConfirm" in html
+    assert "assistantTopButton" not in html
+    assert "spirit-button" not in html
+    assert "/api/assistant/" not in html
+    assert "模型诊断" not in html
+    assert "神经网络影子大脑" not in html
+    assert "选择策略" not in html
 
 
 def test_start_script_preloads_latest_dashboard_before_services() -> None:

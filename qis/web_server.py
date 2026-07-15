@@ -14,19 +14,12 @@ from qis.deep_analysis import (
     fetch_deep_news,
     rank_deep_analyses,
 )
-from qis.decision_assistant import (
-    DecisionAssistant,
-    DecisionAssistantError,
-    LlmSettings,
-    build_decision_context,
-)
 from qis.forecast_learning import apply_strategy_adjustments, hour_bucket
 from qis.models import Candle
 from qis.okx import OkxClient, OkxError
 from qis.position_risk import analyze_position
 from qis.spot_dashboard import render_spot_dashboard_cache
 from qis.spot_forecast import FORECAST_HISTORY_LIMIT, SpotForecastEngine
-from qis.ml_shadow import rank_shadow_brains
 from qis.storage import Storage
 
 
@@ -69,12 +62,10 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
         directory: str,
         storage: Storage,
         quote_service: LiveQuoteService,
-        assistant: DecisionAssistant,
         **kwargs,
     ) -> None:
         self.storage = storage
         self.quote_service = quote_service
-        self.assistant = assistant
         super().__init__(*args, directory=directory, **kwargs)
 
     def end_headers(self) -> None:
@@ -99,11 +90,6 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                 {
                     "positions": positions,
                     "analyses": analyses,
-                    "trade_stats": self.storage.spot_trade_stats(),
-                    "model_evaluation": self.storage.forecast_evaluation(),
-                    "strategy_adjustments": self.storage.forecast_strategy_adjustments(),
-                    "advice": self.storage.forecast_advice(),
-                    "learning_run": self.storage.latest_forecast_learning_run(),
                 }
             )
             return
@@ -165,11 +151,6 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
             )
             self._json({"ok": True, "ranking": ranking})
             return
-        if path == "/api/shadow-brain/rank":
-            forecasts = self._live_forecasts()
-            ranking = rank_shadow_brains(list(forecasts.values()))
-            self._json({"ok": True, "ranking": ranking})
-            return
         if path == "/api/deep-analysis":
             query = parse_qs(urlparse(self.path).query)
             inst_id = str((query.get("inst_id") or [""])[0])
@@ -197,16 +178,7 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
             self._json({"ok": True, "analysis": analysis})
             return
         if path == "/api/health":
-            self._json(
-                {
-                    "ok": True,
-                    "mode": "spot-analysis",
-                    "assistant": self.assistant.status(),
-                }
-            )
-            return
-        if path == "/api/assistant/status":
-            self._json(self.assistant.status())
+            self._json({"ok": True, "mode": "spot-analysis"})
             return
         super().do_GET()
 
@@ -248,31 +220,9 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                     200 if success else 404,
                 )
                 return
-            if path == "/api/assistant/stream":
-                self._assistant_stream_request(payload)
-                return
-            if path == "/api/assistant/ask":
-                context, references = self._assistant_context(payload)
-                history = (
-                    payload.get("history")
-                    if isinstance(payload.get("history"), list)
-                    else []
-                )
-                question = str(payload.get("question") or "")
-                answer = self.assistant.ask(question, context, history)
-                self._json(
-                    {
-                        "answer": answer,
-                        "references": references,
-                        **self.assistant.status(),
-                    }
-                )
-                return
             self._json({"ok": False, "error": "not found"}, 404)
         except (KeyError, TypeError, ValueError) as exc:
             self._json({"ok": False, "error": str(exc)}, 400)
-        except DecisionAssistantError as exc:
-            self._json({"ok": False, "error": str(exc)}, 503)
 
     def _read_json(self) -> dict:
         length = int(self.headers.get("Content-Length", "0"))
@@ -288,68 +238,6 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
-
-    def _assistant_stream(
-        self,
-        question: str,
-        context: dict,
-        history: list[dict],
-        references: list[dict],
-    ) -> None:
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-store, no-transform")
-        self.send_header("X-Accel-Buffering", "no")
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self._stream_event(
-            {
-                "type": "start",
-                "references": references,
-                **self.assistant.status(),
-            }
-        )
-        self._stream_event({"type": "padding", "content": " " * 2048})
-        try:
-            for content in self.assistant.ask_stream(question, context, history):
-                self._stream_event({"type": "delta", "content": content})
-            self._stream_event({"type": "done"})
-        except (ValueError, DecisionAssistantError) as exc:
-            self._stream_event({"type": "error", "error": str(exc)})
-        except (BrokenPipeError, ConnectionResetError):
-            return
-
-    def _assistant_stream_request(self, payload: dict) -> None:
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-store, no-transform")
-        self.send_header("X-Accel-Buffering", "no")
-        self.send_header("Connection", "close")
-        self.end_headers()
-        try:
-            self._stream_event({"type": "start", "references": [], **self.assistant.status()})
-            self._stream_event({"type": "padding", "content": " " * 2048})
-            context, references = self._assistant_context(payload)
-            history = (
-                payload.get("history")
-                if isinstance(payload.get("history"), list)
-                else []
-            )
-            self._stream_event({"type": "start", "references": references, **self.assistant.status()})
-            for content in self.assistant.ask_stream(str(payload.get("question") or ""), context, history):
-                self._stream_event({"type": "delta", "content": content})
-            self._stream_event({"type": "done"})
-        except (ValueError, DecisionAssistantError) as exc:
-            self._stream_event({"type": "error", "error": str(exc)})
-        except (BrokenPipeError, ConnectionResetError):
-            return
-
-    def _stream_event(self, payload: dict) -> None:
-        body = (
-            "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
-        ).encode()
-        self.wfile.write(body)
-        self.wfile.flush()
 
     def _forecasts(self) -> dict[str, dict]:
         path = Path(self.directory) / "spot_forecasts.json"
@@ -377,36 +265,6 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
             if position.get("sell_time") is None
             and str(position["inst_id"]) in forecasts
         ]
-
-    def _assistant_context(self, payload: dict) -> tuple[dict, list[dict]]:
-        positions = [dict(row) for row in self.storage.spot_positions()]
-        scope = str(payload.get("scope") or "asset")
-        selected_inst_id = str(payload.get("inst_id") or "")
-        if scope == "global":
-            forecasts = self._live_forecasts()
-        else:
-            inst_ids = {
-                str(position["inst_id"])
-                for position in positions
-                if position.get("sell_time") is None
-            }
-            if selected_inst_id:
-                inst_ids.add(selected_inst_id)
-            forecasts = self._live_forecasts(inst_ids)
-        analyses = self._position_analyses(positions, forecasts)
-        return build_decision_context(
-            forecasts=forecasts,
-            selected_inst_id=selected_inst_id,
-            selected_horizon=str(payload.get("horizon") or ""),
-            positions=positions,
-            analyses=analyses,
-            evaluation=self.storage.forecast_evaluation(),
-            adjustments=self.storage.forecast_strategy_adjustments(),
-            advice=self.storage.forecast_advice(),
-            analysis_scope=scope,
-            learning_run=self.storage.latest_forecast_learning_run(),
-            selected_strategy=str(payload.get("strategy_id") or "adaptive"),
-        )
 
     def _live_forecasts(
         self,
@@ -485,7 +343,6 @@ def serve(host: str, port: int, data_dir: Path, db_path: Path) -> None:
             storage.forecast_advice(),
         )
     quote_service = LiveQuoteService()
-    assistant = DecisionAssistant(LlmSettings.from_env())
 
     def handler(*args, **kwargs):
         return QisRequestHandler(
@@ -493,7 +350,6 @@ def serve(host: str, port: int, data_dir: Path, db_path: Path) -> None:
             directory=str(data_dir),
             storage=storage,
             quote_service=quote_service,
-            assistant=assistant,
             **kwargs,
         )
 
