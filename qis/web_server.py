@@ -19,7 +19,7 @@ from qis.models import Candle
 from qis.okx import OkxClient, OkxError
 from qis.position_risk import analyze_position
 from qis.spot_dashboard import render_spot_dashboard_cache
-from qis.spot_forecast import FORECAST_HISTORY_LIMIT, SpotForecastEngine
+from qis.spot_forecast import SpotForecastEngine
 from qis.storage import Storage
 
 
@@ -101,36 +101,73 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
             query = parse_qs(urlparse(self.path).query)
             inst_id = str((query.get("inst_id") or [""])[0])
             bar = str((query.get("bar") or ["1H"])[0]).upper()
-            if inst_id not in self._forecasts():
+            forecasts = self._forecasts()
+            forecast = forecasts.get(inst_id)
+            if forecast is None:
                 self._json({"ok": False, "error": "unknown instrument"}, 404)
                 return
             if bar not in {"1H", "1D"}:
                 self._json({"ok": False, "error": "unsupported candle interval"}, 400)
                 return
+            analysis_forecast = (
+                _deep_analysis_forecast(forecast, forecasts)
+                if bar == "1D"
+                else forecast
+            )
+            cached_candles = _forecast_history_candles(analysis_forecast)
+            if _is_external_equity_history(analysis_forecast):
+                if bar != "1D":
+                    self._json(
+                        {"ok": False, "error": "intraday candles unavailable for external equity"},
+                        400,
+                    )
+                    return
+                if not cached_candles:
+                    self._json({"ok": False, "error": "no cached daily candles"}, 503)
+                    return
+                self._json(
+                    {
+                        "ok": True,
+                        "inst_id": inst_id,
+                        "bar": bar,
+                        "source": str(
+                            analysis_forecast.get("data_source")
+                            or analysis_forecast.get("quote_source")
+                            or "cached daily history"
+                        ),
+                        "coverage": len(cached_candles),
+                        "analysis_source_inst_id": analysis_forecast.get("analysis_source_inst_id"),
+                        "candles": _serialize_candles(cached_candles),
+                    },
+                )
+                return
             try:
-                candles = OkxClient().public_candles(
+                okx_candles = OkxClient().public_candles(
                     inst_id,
                     bar,
-                    limit=168 if bar == "1H" else FORECAST_HISTORY_LIMIT,
+                    limit=168 if bar == "1H" else 300,
                 )
             except OkxError as exc:
-                self._json({"ok": False, "error": str(exc)}, 503)
-                return
+                if bar != "1D" or not cached_candles:
+                    self._json({"ok": False, "error": str(exc)}, 503)
+                    return
+                okx_candles = []
+                source = f"{analysis_forecast.get('quote_source') or 'cached daily history'} · OKX unavailable"
+            else:
+                source = "OKX market candles"
+            candles = (
+                _merge_candles(cached_candles, okx_candles)
+                if bar == "1D"
+                else okx_candles
+            )
             self._json(
                 {
+                    "ok": True,
                     "inst_id": inst_id,
                     "bar": bar,
-                    "candles": [
-                        {
-                            "date": item.ts.isoformat(),
-                            "open": item.open,
-                            "high": item.high,
-                            "low": item.low,
-                            "close": item.close,
-                            "volume": item.volume,
-                        }
-                        for item in candles
-                    ],
+                    "source": source,
+                    "coverage": len(candles),
+                    "candles": _serialize_candles(candles),
                 }
             )
             return
@@ -398,6 +435,53 @@ def _is_external_equity_history(forecast: dict) -> bool:
 def _history_len(forecast: dict) -> int:
     history = forecast.get("history")
     return len(history) if isinstance(history, list) else 0
+
+
+def _forecast_history_candles(forecast: dict) -> list[Candle]:
+    candles: list[Candle] = []
+    for item in forecast.get("history") or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            close = float(item["close"])
+            candles.append(
+                Candle(
+                    ts=_parse_candle_time(item["date"]),
+                    open=float(item.get("open", close)),
+                    high=float(item.get("high", close)),
+                    low=float(item.get("low", close)),
+                    close=close,
+                    volume=float(item.get("volume", 0) or 0),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return sorted(candles, key=lambda item: item.ts)
+
+
+def _parse_candle_time(value: object) -> datetime:
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+def _merge_candles(fallback: list[Candle], primary: list[Candle]) -> list[Candle]:
+    by_day = {item.ts.date().isoformat(): item for item in fallback}
+    by_day.update({item.ts.date().isoformat(): item for item in primary})
+    return sorted(by_day.values(), key=lambda item: item.ts)
+
+
+def _serialize_candles(candles: list[Candle]) -> list[dict]:
+    return [
+        {
+            "date": item.ts.isoformat(),
+            "open": item.open,
+            "high": item.high,
+            "low": item.low,
+            "close": item.close,
+            "volume": item.volume,
+        }
+        for item in candles
+    ]
 
 
 def _rebase_forecast_prices(

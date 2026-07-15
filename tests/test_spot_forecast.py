@@ -262,6 +262,11 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert 'id="volumeRatio"' in html
     assert 'id="decisionChart"' in html
     assert "function drawDecisionChart" in html
+    assert 'id="chartStats"' in html
+    assert "function loadDailyCandles(forecast)" in html
+    assert "function movingAverage" in html
+    assert "loadingDailyCandles:'加载完整日K…'" in html
+    assert "'&bar='+encodeURIComponent(bar)" in html
     assert "volume-bar" in html
     assert "exitLevels:'卖出价格'" in html
     assert 'data-frame="1H"' in html
