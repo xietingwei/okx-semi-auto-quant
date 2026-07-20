@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -21,6 +21,16 @@ from qis.position_risk import analyze_position
 from qis.spot_dashboard import render_spot_dashboard_cache
 from qis.spot_forecast import SpotForecastEngine
 from qis.storage import Storage
+
+
+CANDLE_RANGE_SPECS = {
+    "1D": {"bar": "5m", "days": 1, "limit": 288},
+    "1M": {"bar": "4H", "days": 31, "limit": 186},
+    "3M": {"bar": "12H", "days": 93, "limit": 186},
+    "6M": {"bar": "1D", "days": 186, "limit": 186},
+    "1Y": {"bar": "1D", "days": 366, "limit": 366},
+    "ALL": {"bar": "1D", "days": None, "limit": 1_500},
+}
 
 
 class LiveQuoteService:
@@ -100,52 +110,60 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
         if path == "/api/spot/candles":
             query = parse_qs(urlparse(self.path).query)
             inst_id = str((query.get("inst_id") or [""])[0])
-            bar = str((query.get("bar") or ["1H"])[0]).upper()
+            range_key = str((query.get("range") or [""])[0]).upper()
+            if range_key and range_key not in CANDLE_RANGE_SPECS:
+                self._json({"ok": False, "error": "unsupported candle range"}, 400)
+                return
+            range_spec = CANDLE_RANGE_SPECS.get(range_key)
+            raw_bar = str((query.get("bar") or ["1D"])[0])
+            bar = str(range_spec["bar"]) if range_spec else _normalize_candle_bar(raw_bar)
+            if not bar:
+                self._json({"ok": False, "error": "unsupported candle interval"}, 400)
+                return
             forecasts = self._forecasts()
             forecast = forecasts.get(inst_id)
             if forecast is None:
                 self._json({"ok": False, "error": "unknown instrument"}, 404)
                 return
-            if bar not in {"1H", "1D"}:
-                self._json({"ok": False, "error": "unsupported candle interval"}, 400)
-                return
             analysis_forecast = (
                 _deep_analysis_forecast(forecast, forecasts)
-                if bar == "1D"
+                if range_spec or bar == "1D"
                 else forecast
             )
             cached_candles = _forecast_history_candles(analysis_forecast)
             if _is_external_equity_history(analysis_forecast):
-                if bar != "1D":
-                    self._json(
-                        {"ok": False, "error": "intraday candles unavailable for external equity"},
-                        400,
-                    )
-                    return
                 if not cached_candles:
                     self._json({"ok": False, "error": "no cached daily candles"}, 503)
                     return
+                candles = _candle_window(
+                    cached_candles,
+                    range_spec.get("days") if range_spec else None,
+                )
                 self._json(
                     {
                         "ok": True,
                         "inst_id": inst_id,
-                        "bar": bar,
+                        "bar": "1D",
+                        "range": range_key or "ALL",
                         "source": str(
                             analysis_forecast.get("data_source")
                             or analysis_forecast.get("quote_source")
                             or "cached daily history"
                         ),
-                        "coverage": len(cached_candles),
+                        "coverage": len(candles),
                         "analysis_source_inst_id": analysis_forecast.get("analysis_source_inst_id"),
-                        "candles": _serialize_candles(cached_candles),
+                        "candles": _serialize_candles(candles),
+                        **_candle_span(candles),
                     },
                 )
                 return
+            limit = int(range_spec["limit"]) if range_spec else (168 if bar == "1H" else 300)
             try:
-                okx_candles = OkxClient().public_candles(
-                    inst_id,
-                    bar,
-                    limit=168 if bar == "1H" else 300,
+                client = OkxClient()
+                okx_candles = (
+                    client.public_history_candles(inst_id, bar, limit=limit)
+                    if range_spec
+                    else client.public_candles(inst_id, bar, limit=limit)
                 )
             except OkxError as exc:
                 if bar != "1D" or not cached_candles:
@@ -160,14 +178,18 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                 if bar == "1D"
                 else okx_candles
             )
+            if range_spec:
+                candles = _candle_window(candles, range_spec.get("days"))
             self._json(
                 {
                     "ok": True,
                     "inst_id": inst_id,
                     "bar": bar,
+                    "range": range_key or "",
                     "source": source,
                     "coverage": len(candles),
                     "candles": _serialize_candles(candles),
+                    **_candle_span(candles),
                 }
             )
             return
@@ -462,6 +484,37 @@ def _forecast_history_candles(forecast: dict) -> list[Candle]:
 def _parse_candle_time(value: object) -> datetime:
     parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+def _normalize_candle_bar(value: object) -> str:
+    aliases = {
+        "5M": "5m",
+        "15M": "15m",
+        "30M": "30m",
+        "1H": "1H",
+        "2H": "2H",
+        "4H": "4H",
+        "6H": "6H",
+        "12H": "12H",
+        "1D": "1D",
+        "1W": "1W",
+    }
+    return aliases.get(str(value).upper(), "")
+
+
+def _candle_window(candles: list[Candle], days: int | None) -> list[Candle]:
+    ordered = sorted(candles, key=lambda item: item.ts)
+    if not ordered or days is None:
+        return ordered
+    cutoff = ordered[-1].ts - timedelta(days=days)
+    return [item for item in ordered if item.ts >= cutoff]
+
+
+def _candle_span(candles: list[Candle]) -> dict[str, str]:
+    if not candles:
+        return {"from": "", "to": ""}
+    ordered = sorted(candles, key=lambda item: item.ts)
+    return {"from": ordered[0].ts.isoformat(), "to": ordered[-1].ts.isoformat()}
 
 
 def _merge_candles(fallback: list[Candle], primary: list[Candle]) -> list[Candle]:

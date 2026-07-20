@@ -34,6 +34,49 @@ class OkxClient:
             params={"instId": inst_id, "bar": bar, "limit": str(limit)},
             auth=False,
         )
+        return self._parse_candles(data)
+
+    def public_history_candles(
+        self,
+        inst_id: str,
+        bar: str = "1D",
+        limit: int = 300,
+    ) -> list[Candle]:
+        """Return a paginated candle history, newest window first.
+
+        OKX caps a single history request at 300 rows.  The dashboard needs
+        longer, range-specific windows, so page backwards with ``after`` and
+        de-duplicate the boundary candle returned by adjacent pages.
+        """
+        requested = max(1, min(int(limit), 2_000))
+        candles_by_ts: dict[int, Candle] = {}
+        after: str | None = None
+        while len(candles_by_ts) < requested:
+            page_limit = min(300, requested - len(candles_by_ts))
+            params = {"instId": inst_id, "bar": bar, "limit": str(page_limit)}
+            if after:
+                params["after"] = after
+            data = self._request(
+                "GET",
+                "/api/v5/market/history-candles",
+                params=params,
+                auth=False,
+            )
+            page = self._parse_candles(data)
+            if not page:
+                break
+            before_count = len(candles_by_ts)
+            for candle in page:
+                candles_by_ts[int(candle.ts.timestamp() * 1000)] = candle
+            oldest = min(page, key=lambda item: item.ts)
+            next_after = str(int(oldest.ts.timestamp() * 1000))
+            if len(candles_by_ts) == before_count or next_after == after or len(page) < page_limit:
+                break
+            after = next_after
+        return sorted(candles_by_ts.values(), key=lambda item: item.ts)[-requested:]
+
+    @staticmethod
+    def _parse_candles(data: list) -> list[Candle]:
         candles = []
         for row in data:
             candles.append(

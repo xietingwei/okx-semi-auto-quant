@@ -1,6 +1,6 @@
 # Agent memory for QIS handoff
 
-Last updated: 2026-07-06.
+Last updated: 2026-07-20.
 
 ## Product intent
 
@@ -62,6 +62,13 @@ the web UI without explicit user direction.
   reliability ranking; deep-analysis output includes the selected asset's
   shadow payload. It is shadow-only and must not replace manual trade decisions
   or trigger automatic orders.
+- The asset detail chart is a professional, range-aware candlestick terminal.
+  `GET /api/spot/candles` accepts `range=1D|1M|3M|6M|1Y|ALL`; crypto ranges use
+  5m, 4H, 12H, and paginated daily OKX history as appropriate. The UI separates
+  forecast horizons from chart ranges, supports zoom/pan/crosshair interaction,
+  main-chart MA/EMA/BOLL/SAR/Ichimoku overlays, and VOL/MACD/RSI/KDJ/StochRSI/
+  ATR/CCI/WR/OBV lower panes. External equities remain daily-only and must not
+  present fabricated intraday candles.
 
 ## Key API endpoints
 
@@ -69,7 +76,7 @@ the web UI without explicit user direction.
 | --- | --- | --- |
 | `/api/spot/positions` | `GET` | Returns spot positions, sentinel risk analyses, trade stats, model evaluation, strategy adjustments, advice, and latest learning run. |
 | `/api/spot/quotes` | `GET` | Returns live-rebased opportunity radar forecasts. |
-| `/api/spot/candles` | `GET` | Returns OKX candles for the selected instrument and bar. |
+| `/api/spot/candles` | `GET` | Returns range-aware OKX or external-equity candles for the selected instrument. |
 | `/api/deep-analysis` | `GET` | Returns selected-symbol daily reviews, hypothesis validations, scenarios, and super-brain patterns. |
 | `/api/deep-analysis/rank` | `GET` | Ranks all cached symbols by deep-analysis reliability, core validation rate, and sample depth. |
 | `/api/shadow-brain/rank` | `GET` | Ranks cached symbols by shadow neural validation edge, confidence, and projection gate. |

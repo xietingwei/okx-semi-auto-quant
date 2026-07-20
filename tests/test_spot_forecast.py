@@ -263,15 +263,23 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert 'id="decisionChart"' in html
     assert "function drawDecisionChart" in html
     assert 'id="chartStats"' in html
-    assert "function loadDailyCandles(forecast)" in html
+    assert "function loadRangeCandles(forecast)" in html
+    assert 'id="chartRanges"' in html
+    assert 'data-range="1D"' in html
+    assert 'data-range="6M"' in html
+    assert 'data-range="ALL"' in html
     assert "function movingAverage" in html
-    assert "loadingDailyCandles:'加载完整日K…'" in html
-    assert "'&bar='+encodeURIComponent(bar)" in html
-    assert "volume-bar" in html
+    assert "function calculateRsi" in html
+    assert "function calculateSar" in html
+    assert "function calculateStochRsi" in html
+    assert "'&range='+encodeURIComponent(requestedRange)" in html
+    assert 'data-main-indicator="ICHIMOKU"' in html
+    assert '<option value="MACD" selected>' in html
+    assert '<option value="OBV">OBV</option>' in html
     assert "exitLevels:'卖出价格'" in html
-    assert 'data-frame="1H"' in html
+    assert 'data-frame="1H"' not in html
     assert 'id="chartTooltip"' in html
-    assert "function bindChartHover(points)" in html
+    assert "function bindChartInteractions(points,dims)" in html
     assert 'id="hoverLayer"' in html
     assert 'id="deepAnalysisBtn"' in html
     assert 'id="deepDialog"' in html
