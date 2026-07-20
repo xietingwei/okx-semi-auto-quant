@@ -66,9 +66,9 @@ the web UI without explicit user direction.
   `GET /api/spot/candles` accepts `range=1D|1M|3M|6M|1Y|ALL`; crypto ranges use
   5m, 4H, 12H, and paginated daily OKX history as appropriate. The UI separates
   forecast horizons from chart ranges, supports zoom/pan/crosshair interaction,
-  main-chart MA/EMA/BOLL/SAR/Ichimoku overlays, and VOL/MACD/RSI/KDJ/StochRSI/
-  ATR/CCI/WR/OBV lower panes. External equities remain daily-only and must not
-  present fabricated intraday candles.
+  main-chart MA/EMA/BOLL/SAR/SuperTrend/Ichimoku overlays, and VOL/MACD/RSI/KDJ/
+  StochRSI/ATR/CCI/WR/OBV lower panes. External equities remain daily-only and
+  must not present fabricated intraday candles.
 
 ## Key API endpoints
 

@@ -271,9 +271,11 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert "function movingAverage" in html
     assert "function calculateRsi" in html
     assert "function calculateSar" in html
+    assert "function calculateSuperTrend" in html
     assert "function calculateStochRsi" in html
     assert "'&range='+encodeURIComponent(requestedRange)" in html
     assert 'data-main-indicator="ICHIMOKU"' in html
+    assert 'data-main-indicator="SUPERTREND"' in html
     assert '<option value="MACD" selected>' in html
     assert '<option value="OBV">OBV</option>' in html
     assert "exitLevels:'卖出价格'" in html
