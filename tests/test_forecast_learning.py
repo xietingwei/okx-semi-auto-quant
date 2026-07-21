@@ -66,7 +66,7 @@ def test_strategy_learning_can_strongly_neutralize_unreliable_horizon() -> None:
 
     assert item["expected_return"] == pytest.approx(0.04)
     assert item["up_probability"] == pytest.approx(0.56)
-    assert item["signal"] == "震荡"
+    assert item["signal"] == "偏多"
 
 
 def test_market_wide_calibration_cannot_reverse_asset_direction() -> None:
@@ -151,3 +151,38 @@ def test_new_strategy_variant_does_not_borrow_adaptive_calibration() -> None:
     assert item["learning"]["calibration_method"] == "cold_start_conservative_prior"
     assert result["decision"] == "模拟观察"
     assert result["strategy_validation"] == "冷启动待验证"
+
+
+def test_data_quality_gate_overrides_strategy_cold_start_label() -> None:
+    variant = {
+        "strategy": {"id": "trend"},
+        "current_price": 100.0,
+        "volatility": 0.02,
+        "market_context": {},
+        "data_quality": {
+            "quality": "D",
+            "score": 35,
+            "actionable": False,
+            "bars": 40,
+            "warnings": ["历史K线不足90根"],
+        },
+        "forecasts": [
+            {
+                "key": key,
+                "target": 102.0,
+                "low": 95.0,
+                "high": 108.0,
+                "expected_return": 0.02,
+                "up_probability": 0.56,
+                "confidence": 0.45,
+                "signal": "偏多",
+            }
+            for key in ("1d", "3d", "1w", "2w")
+        ],
+    }
+
+    result = apply_strategy_adjustments(variant, {})
+
+    assert result["decision"] == "历史数据质量不足，观望"
+    assert result["strategy_validation"] == "数据质量未通过"
+    assert result["opportunity_score"] <= 39

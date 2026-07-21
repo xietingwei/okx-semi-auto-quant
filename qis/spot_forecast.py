@@ -287,6 +287,8 @@ class SpotForecastEngine:
                 "current_price": row["current_price"],
                 "volatility": row["volatility"],
                 "market_context": row["market_context"],
+                "data_quality": row["data_quality"],
+                "short_term_context": row["short_term_context"],
                 "forecasts": row["forecasts"],
                 "opportunity_score": row["opportunity_score"],
                 "rebound_score": row["rebound_score"],
@@ -434,6 +436,27 @@ class SpotForecastEngine:
             return 0.0
         slope = sum((index - x_mean) * (value - y_mean) for index, value in enumerate(logs)) / denominator
         return slope
+
+    @staticmethod
+    def _momentum_blend(
+        days: int,
+        momentum_7: float,
+        momentum_30: float,
+        momentum_90: float,
+    ) -> float:
+        """Compatibility helper for callers of the pre-short-horizon API.
+
+        The production model no longer emits 1/3/6-month forecasts, but a few
+        notebooks and stored calibration jobs still import this pure helper.
+        Keep its old bounded blend available without using it in live signals.
+        """
+        if days <= 7:
+            return momentum_7 * 0.65 + momentum_30 * 0.25 + momentum_90 * 0.10
+        if days <= 30:
+            return momentum_7 * 0.25 + momentum_30 * 0.55 + momentum_90 * 0.20
+        if days <= 90:
+            return momentum_7 * 0.10 + momentum_30 * 0.35 + momentum_90 * 0.55
+        return momentum_30 * 0.20 + momentum_90 * 0.80
 
     @staticmethod
     def _momentum_rate(

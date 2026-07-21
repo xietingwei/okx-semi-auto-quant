@@ -355,6 +355,48 @@ def test_spot_candles_route_uses_live_edge_range_fetcher_when_available(monkeypa
     assert payload["to"] == candles[-1].ts.isoformat()
 
 
+def test_spot_candles_route_honors_explicit_hourly_interval_for_history_range(monkeypatch) -> None:
+    handler = QisRequestHandler.__new__(QisRequestHandler)
+    handler.path = "/api/spot/candles?inst_id=BTC-USDT&range=1M&bar=1H"
+    payloads = []
+    forecast = _route_forecast(
+        "BTC-USDT",
+        symbol="BTC",
+        count=220,
+        source="OKX ticker",
+        market_type="现货",
+    )
+    start = datetime(2026, 6, 20, tzinfo=timezone.utc)
+    candles = [
+        Candle(start + timedelta(hours=index), 100, 102, 99, 101, 1000)
+        for index in range(6)
+    ]
+
+    class StubOkxClient:
+        @staticmethod
+        def public_range_candles(inst_id: str, bar: str, limit: int) -> list[Candle]:
+            assert inst_id == "BTC-USDT"
+            assert bar == "1H"
+            assert limit == 745
+            return candles
+
+    monkeypatch.setattr(QisRequestHandler, "_forecasts", lambda self: {"BTC-USDT": forecast})
+    monkeypatch.setattr("qis.web_server.OkxClient", StubOkxClient)
+    monkeypatch.setattr(
+        QisRequestHandler,
+        "_json",
+        lambda self, payload, status=200: payloads.append((status, payload)),
+    )
+
+    QisRequestHandler.do_GET(handler)
+
+    status, payload = payloads[0]
+    assert status == 200
+    assert payload["range"] == "1M"
+    assert payload["bar"] == "1H"
+    assert payload["coverage"] == len(candles)
+
+
 def test_spot_candles_route_rejects_raw_hourly_external_equity_request(monkeypatch) -> None:
     handler = QisRequestHandler.__new__(QisRequestHandler)
     handler.path = "/api/spot/candles?inst_id=TSLA-US&bar=1H"

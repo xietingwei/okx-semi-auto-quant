@@ -83,7 +83,13 @@ def _render_spot(settings, output: Path) -> None:
     candles_by_inst = {}
     def fetch_candles(inst_id: str):
         try:
-            return inst_id, client.public_candles(inst_id, "1D", limit=300), None
+            history_fetcher = getattr(client, "public_range_candles", None)
+            candles = (
+                history_fetcher(inst_id, "1D", limit=300)
+                if callable(history_fetcher)
+                else client.public_candles(inst_id, "1D", limit=300)
+            )
+            return inst_id, candles, None
         except OkxError as exc:
             return inst_id, None, exc
 

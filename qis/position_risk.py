@@ -5,7 +5,16 @@ import math
 from typing import Mapping, Any
 
 
-HORIZON_DAYS = {"1d": 1, "1w": 7, "1m": 30, "3m": 90, "6m": 180}
+HORIZON_DAYS = {
+    "1d": 1,
+    "3d": 3,
+    "1w": 7,
+    "2w": 14,
+    # Keep legacy values so existing manually recorded positions still work.
+    "1m": 30,
+    "3m": 90,
+    "6m": 180,
+}
 
 
 def analyze_position(position: Mapping[str, Any], forecast: Mapping[str, Any], now: datetime | None = None) -> dict:
@@ -21,7 +30,7 @@ def analyze_position(position: Mapping[str, Any], forecast: Mapping[str, Any], n
     volatility = max(float(forecast.get("volatility", 0.0)), 0.002)
     invalidation = float(forecast.get("invalidation", entry * 0.94))
     horizon = str(position["horizon"])
-    horizon_days = HORIZON_DAYS.get(horizon, 30)
+    horizon_days = HORIZON_DAYS.get(horizon, 7)
     held_days = max(0.0, (now - buy_time).total_seconds() / 86400)
     selected = next(
         (item for item in forecast.get("forecasts", []) if item.get("key") == horizon),

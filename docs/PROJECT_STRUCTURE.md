@@ -25,6 +25,7 @@ because the launch scripts and generated dashboard paths are deliberately simple
 | `qis/spot_dashboard.py` | Source template for `data/index.html`; edit this file, not generated HTML. |
 | `qis/storage.py` | SQLite schema and persistence helpers for positions, manual trades, forecast evaluations, and learning runs. |
 | `qis/spot_forecast.py` | Spot forecast model, strategy variants, opportunity scoring, and model versioning. |
+| `qis/short_term.py` | Canonical candle cleanup, short-term data quality scoring, and evidence-gate context. |
 | `qis/ml_shadow.py` | Dependency-free shadow neural learner, validation gate, and all-asset shadow ranking. |
 | `qis/deep_analysis.py` | Per-symbol daily deep analysis, hypothesis validation, and super-brain pattern summaries. |
 | `qis/position_risk.py` | Holding-level sentinel analysis: stops, target distance, risk score, and sell timing. |

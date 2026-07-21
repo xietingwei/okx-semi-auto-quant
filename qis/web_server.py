@@ -36,11 +36,27 @@ CANDLE_RANGE_SPECS = {
 # needs a short intraday view. Keep the default bounded to one week; callers
 # asking for a longer range should use the named range specs above.
 CANDLE_BAR_LIMITS = {
+    "5m": 288,
+    "15m": 288,
+    "30m": 168,
     "1H": 168,
     "2H": 168,
     "4H": 168,
     "6H": 168,
     "12H": 168,
+}
+
+CANDLE_BAR_HOURS = {
+    "5m": 5 / 60,
+    "15m": 0.25,
+    "30m": 0.5,
+    "1H": 1.0,
+    "2H": 2.0,
+    "4H": 4.0,
+    "6H": 6.0,
+    "12H": 12.0,
+    "1D": 24.0,
+    "1W": 168.0,
 }
 
 
@@ -152,7 +168,20 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                 # Yahoo-backed equities have daily candles only. A raw
                 # intraday ``bar`` request must fail explicitly instead of
                 # silently returning daily rows labelled as hourly data.
-                if bar != "1D":
+                # Named history ranges use the range's internal interval as a
+                # crypto default; for equities they still mean daily history.
+                # Only an explicit intraday bar (or the default intraday 1D
+                # view) is rejected.
+                if normalized_requested_bar and bar != "1D":
+                    self._json(
+                        {
+                            "ok": False,
+                            "error": "intraday candles unavailable for external equity",
+                        },
+                        400,
+                    )
+                    return
+                if not normalized_requested_bar and range_key == "1D":
                     self._json(
                         {
                             "ok": False,
@@ -199,7 +228,15 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                 elif range_spec or normalized_requested_bar:
                     # Compatibility fallback for light-weight test clients and
                     # older integrations that only expose history-candles.
-                    okx_candles = client.public_history_candles(inst_id, bar, limit=limit)
+                    history_fetcher = getattr(client, "public_history_candles", None)
+                    if callable(history_fetcher):
+                        okx_candles = history_fetcher(inst_id, bar, limit=limit)
+                    else:
+                        okx_candles = client.public_candles(
+                            inst_id,
+                            bar,
+                            limit=min(limit, 300),
+                        )
                 elif limit > 300 and callable(range_fetcher):
                     okx_candles = range_fetcher(inst_id, bar, limit=limit)
                 else:
@@ -542,6 +579,30 @@ def _normalize_candle_bar(value: object) -> str:
         "1W": "1W",
     }
     return aliases.get(str(value).upper(), "")
+
+
+def _candle_limit(
+    range_spec: dict | None,
+    bar: str,
+    explicit_bar: bool,
+) -> int:
+    """Choose a bounded request size for a range/interval pair.
+
+    The range defaults preserve the established terminal behaviour (1D uses
+    5m, 1M uses 4H, etc.).  An explicit interval should still cover the full
+    selected range, capped at OKX's paginated history ceiling.
+    """
+    if not range_spec:
+        return CANDLE_BAR_LIMITS.get(bar, 300)
+    if not explicit_bar:
+        return int(range_spec["limit"])
+    days = range_spec.get("days")
+    if days is None:
+        return min(2_000, CANDLE_BAR_LIMITS.get(bar, 300))
+    hours = CANDLE_BAR_HOURS.get(bar)
+    if not hours or hours <= 0:
+        return int(range_spec["limit"])
+    return max(1, min(2_000, int(days * 24 / hours + 1)))
 
 
 def _candle_window(candles: list[Candle], days: int | None) -> list[Candle]:

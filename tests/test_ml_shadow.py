@@ -44,7 +44,7 @@ def test_shadow_brain_attaches_prediction_for_sufficient_history() -> None:
 
     assert result[0]["inst_id"] == "TREND-USDT"
     brain = result[0]["shadow_brain"]
-    assert brain["model_version"] == "shadow_mlp_v1"
+    assert brain["model_version"] == "shadow_mlp_v2_temporal_split"
     assert brain["status"] == "shadow_running"
     assert brain["samples"] >= 60
     assert brain["projection_gate"] in {"allowed", "watch", "blocked"}
@@ -72,7 +72,7 @@ def test_shadow_brain_ranking_prioritizes_validated_edge() -> None:
 
     ranking = rank_shadow_brains(rows)
 
-    assert ranking["model_version"] == "shadow_mlp_v1"
+    assert ranking["model_version"] == "shadow_mlp_v2_temporal_split"
     assert ranking["total"] == 2
     assert ranking["ranked"][0]["rank"] == 1
     assert ranking["ranked"][0]["shadow_score"] >= ranking["ranked"][1]["shadow_score"]

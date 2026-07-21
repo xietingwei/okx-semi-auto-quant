@@ -3,13 +3,13 @@
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-51%20passing-2ea44f)](#testing)
+[![Tests](https://img.shields.io/badge/tests-95%20passing-2ea44f)](#testing)
 [![Mode](https://img.shields.io/badge/default-paper%20trading-cba45f)](#safety-boundaries)
 [![GitHub last commit](https://img.shields.io/github/last-commit/xietingwei/okx-semi-auto-quant)](https://github.com/xietingwei/okx-semi-auto-quant/commits/main)
 
 **QIS** is a local-first, explainable market research and decision-support
 system for OKX spot and perpetual markets. It combines live market data,
-multiple forecasting strategies, walk-forward evaluation, portfolio-aware risk
+multiple short-horizon forecasting strategies, walk-forward evaluation, portfolio-aware risk
 controls, and an optional LLM copilot.
 
 The system runs in **paper mode by default**. It analyzes and records decisions;
@@ -67,12 +67,20 @@ hypothesis.
 
 | Strategy | Primary horizon | Directional intent | Best suited for | Main failure mode |
 | --- | --- | --- | --- | --- |
-| Adaptive | All horizons | Trend-led, balanced by crowding and market regime | Mixed or transitioning markets | Simultaneous factor failure during shocks |
-| Trend following | 1–6 months | Follow the 30/90-day dominant trend | Persistent directional markets | Whipsaw in ranges |
-| Breakout confirmation | 1 day–1 month | Follow momentum confirmed by volume, order book, and positioning | Expansion after consolidation | False breakouts |
-| Mean reversion | 1 day–1 month | Trade against statistically excessive displacement | Range-bound markets and post-shock repair | Catching a falling knife in strong trends |
+| Adaptive | 1–14 days | Trend-led, balanced by crowding and market regime | Mixed or transitioning markets | Simultaneous factor failure during shocks |
+| Trend following | 3–14 days | Follow the local 7/14/30-day trend | Short directional moves and pullback continuation | Whipsaw in ranges |
+| Breakout confirmation | 1–7 days | Follow momentum confirmed by volume, order book, and positioning | Expansion after consolidation | False breakouts |
+| Mean reversion | 1–7 days | Trade against statistically excessive displacement | Range-bound markets and post-shock repair | Catching a falling knife in strong trends |
 
 New strategies use isolated model versions and independent evaluation records.
+
+### Short-horizon boundary and evidence gate
+
+The production forecast surface is limited to **1 day, 3 days, 7 days, and 14 days**. Three days is the primary decision horizon, seven days is confirmation, one day is execution timing, and 14 days is risk context only. The system no longer emits point forecasts for one, three, or six months; those horizons are too unstable to be useful trading references.
+
+The opportunity radar requires both clean short-term data and out-of-sample evidence. Duplicate, missing, stale, or insufficient candles cap the opportunity score at 39 and produce an observation-only decision. The 3-day and 7-day horizons also need independent validation windows and an edge over baseline before they become actionable.
+
+Chart ranges (**1D, 1M, 3M, 6M, 1Y, ALL**) describe historical coverage, not forecast horizons. Crypto charts request real OKX intervals such as 5m, 1H, 2H, 4H, 12H, and 1D and merge live plus paginated history. External equities are daily-only; the UI never relabels daily candles as hourly data.
 Until enough strategy-specific outcomes mature, they remain marked
 **simulation only** and cannot issue a production-ready entry recommendation.
 
@@ -317,7 +325,8 @@ Read [SECURITY.md](SECURITY.md) before configuring credentials.
 
 ```text
 qis/
-├── spot_forecast.py      multi-horizon strategy engines
+├── spot_forecast.py      short-horizon strategy engines
+├── short_term.py         short-horizon data quality and evidence gates
 ├── deep_analysis.py      daily hypothesis validation and super brain
 ├── market_factors.py     market microstructure and global regime
 ├── forecast_learning.py  bounded historical calibration

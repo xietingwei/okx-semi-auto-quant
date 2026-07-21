@@ -7,7 +7,15 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 from qis.models import AccountState, TradePlan, utc_now
-from qis.spot_forecast import FORECAST_MODEL_VERSION
+from qis.spot_forecast import (
+    FORECAST_HORIZONS,
+    FORECAST_LABELS,
+    FORECAST_MODEL_VERSION,
+)
+
+
+FORECAST_KEYS = tuple(key for key, _, _ in FORECAST_HORIZONS)
+POSITION_HORIZONS = tuple(dict.fromkeys((*FORECAST_KEYS, "1m", "3m", "6m")))
 
 
 SCHEMA = """
@@ -403,7 +411,7 @@ class Storage:
         rows = self.spot_positions(1000)
         closed = [row for row in rows if row["sell_time"] is not None]
         by_horizon: dict[str, dict] = {}
-        for horizon in ("1d", "1w", "1m", "3m", "6m"):
+        for horizon in POSITION_HORIZONS:
             subset = [row for row in closed if row["horizon"] == horizon]
             if not subset:
                 by_horizon[horizon] = {
@@ -582,12 +590,15 @@ class Storage:
                 ).fetchone()[0]
             )
         by_horizon: dict[str, dict] = {}
-        for horizon in ("1d", "1w", "1m", "3m", "6m"):
+        for horizon in FORECAST_KEYS:
             rows = [row for row in completed if row["horizon"] == horizon]
             if not rows:
                 by_horizon[horizon] = {
                     "samples": 0,
+                    "test_windows": 0,
                     "direction_accuracy": None,
+                    "baseline_accuracy": None,
+                    "edge": None,
                     "mae": None,
                     "bias": None,
                     "brier": None,
@@ -599,6 +610,9 @@ class Storage:
                 for row in rows
                 if (float(row["expected_return"]) >= 0) == (float(row["actual_return"]) >= 0)
             )
+            actual_up = sum(1 for row in rows if float(row["actual_return"]) > 0)
+            up_rate = actual_up / len(rows)
+            baseline_accuracy = max(up_rate, 1 - up_rate)
             errors = [
                 float(row["expected_return"]) - float(row["actual_return"])
                 for row in rows
@@ -614,7 +628,10 @@ class Storage:
             )
             by_horizon[horizon] = {
                 "samples": len(rows),
+                "test_windows": len({str(row["predicted_at"])[:10] for row in rows}),
                 "direction_accuracy": direction_hits / len(rows),
+                "baseline_accuracy": baseline_accuracy,
+                "edge": direction_hits / len(rows) - baseline_accuracy,
                 "mae": sum(abs(error) for error in errors) / len(rows),
                 "bias": sum(errors) / len(rows),
                 "brier": brier,
@@ -643,15 +660,17 @@ class Storage:
     def forecast_advice(self) -> list[dict[str, str]]:
         evaluation = self.forecast_evaluation()
         advice: list[dict[str, str]] = []
-        labels = {"1d": "1天", "1w": "1周", "1m": "1月", "3m": "3月", "6m": "6月"}
+        labels = FORECAST_LABELS
+        mae_limits = {"1d": 0.025, "3d": 0.045, "1w": 0.07, "2w": 0.10}
         for horizon, stats in evaluation["by_horizon"].items():
             samples = int(stats["samples"])
-            if samples < 10:
+            windows = int(stats.get("test_windows") or 0)
+            if samples < 30 or windows < 8:
                 advice.append(
                     {
                         "level": "sample",
                         "title": f"{labels[horizon]}历史预测待积累",
-                        "detail": f"已有 {samples} 个到期预测样本；至少 10 个后再判断该周期是否需要调整。",
+                        "detail": f"已有 {samples} 个到期样本、{windows} 个独立日期窗口；至少需要 30 个样本和 8 个窗口。",
                     }
                 )
                 continue
@@ -660,15 +679,16 @@ class Storage:
             bias = float(stats["bias"])
             brier = float(stats["brier"])
             coverage = float(stats["interval_coverage"])
-            if accuracy < 0.5:
+            baseline = float(stats.get("baseline_accuracy") or 0.5)
+            if accuracy <= baseline:
                 advice.append(
                     {
                         "level": "risk",
-                        "title": f"重训{labels[horizon]}方向模型",
-                        "detail": f"历史预测与真实走势的方向命中率仅 {accuracy * 100:.1f}%，应降低动量权重并增加行情状态分层。",
+                        "title": f"停用{labels[horizon]}交易参考",
+                        "detail": f"样本外方向命中率 {accuracy * 100:.1f}% 未超过简单基准 {baseline * 100:.1f}%，该周期只能观察。",
                     }
                 )
-            if mae > 0.08:
+            if mae > mae_limits[horizon]:
                 advice.append(
                     {
                         "level": "error",
@@ -676,7 +696,7 @@ class Storage:
                         "detail": f"预测收益与真实收益的平均绝对误差为 {mae * 100:.1f}%，目标价振幅偏大。",
                     }
                 )
-            if abs(bias) > 0.03:
+            if abs(bias) > mae_limits[horizon] * 0.45:
                 advice.append(
                     {
                         "level": "bias",
@@ -725,11 +745,16 @@ class Storage:
                 )
             )
         result: dict[str, dict] = {}
-        for horizon in ("1d", "1w", "1m", "3m", "6m"):
+        for horizon in FORECAST_KEYS:
             rows = [row for row in completed if row["horizon"] == horizon][:1200]
             samples = len(rows)
-            if samples < minimum_samples:
-                result[horizon] = {"active": False, "samples": samples}
+            test_windows = len({str(row["predicted_at"])[:10] for row in rows})
+            if samples < minimum_samples or test_windows < 8:
+                result[horizon] = {
+                    "active": False,
+                    "samples": samples,
+                    "test_windows": test_windows,
+                }
                 continue
 
             predicted = [float(row["expected_return"]) for row in rows]
@@ -743,6 +768,7 @@ class Storage:
             ) / weight_sum
             actual_up = [1.0 if value > 0 else 0.0 for value in actual]
             actual_up_rate = weighted(actual_up)
+            baseline_accuracy = max(actual_up_rate, 1 - actual_up_rate)
             direction_accuracy = weighted([
                 1.0 if (left >= 0) == (right >= 0) else 0.0
                 for left, right in zip(predicted, actual)
@@ -810,7 +836,10 @@ class Storage:
                 "probability_scale": _clip(probability_scale, 0.10, 1.05),
                 "interval_scale": interval_scale,
                 "direction_accuracy": direction_accuracy,
+                "baseline_accuracy": baseline_accuracy,
+                "edge": direction_accuracy - baseline_accuracy,
                 "coverage": coverage,
+                "test_windows": test_windows,
                 "calibration_method": "direction_preserving_shrinkage_v3",
             }
         return result

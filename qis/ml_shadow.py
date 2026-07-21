@@ -7,7 +7,7 @@ from statistics import mean, pstdev
 from typing import Any
 
 
-MODEL_VERSION = "shadow_mlp_v1"
+MODEL_VERSION = "shadow_mlp_v2_temporal_split"
 MIN_HISTORY = 90
 WINDOW = 30
 HORIZON = 5
@@ -16,6 +16,7 @@ HORIZON = 5
 @dataclass(frozen=True)
 class ShadowSample:
     inst_id: str
+    predicted_at: str
     features: list[float]
     label: int
     future_return: float
@@ -156,6 +157,7 @@ def _samples(forecast: dict[str, Any]) -> list[ShadowSample]:
         rows.append(
             ShadowSample(
                 inst_id=inst_id,
+                predicted_at=str(candles[index - 1].get("date") or ""),
                 features=_features(candles[index - WINDOW:index]),
                 label=1 if forward > 0 else 0,
                 future_return=forward,
@@ -268,8 +270,19 @@ def _validation_quality(model: TinyMlp, validation: list[ShadowSample]) -> dict[
 def _split_samples(samples: list[ShadowSample]) -> tuple[list[ShadowSample], list[ShadowSample]]:
     if len(samples) < 20:
         return samples, []
-    split = max(1, int(len(samples) * 0.72))
-    return samples[:split], samples[split:]
+    # Split by global date, not by asset insertion order. Keeping an entire
+    # date on one side prevents the same market regime leaking into validation
+    # through another instrument.
+    dates = sorted({sample.predicted_at for sample in samples if sample.predicted_at})
+    if len(dates) < 4:
+        ordered = sorted(samples, key=lambda sample: sample.predicted_at)
+        split = max(1, int(len(ordered) * 0.72))
+        return ordered[:split], ordered[split:]
+    cutoff_index = min(len(dates) - 2, max(0, int(len(dates) * 0.72) - 1))
+    cutoff = dates[cutoff_index]
+    train = [sample for sample in samples if sample.predicted_at <= cutoff]
+    validation = [sample for sample in samples if sample.predicted_at > cutoff]
+    return train, validation
 
 
 def _blocked(reason: str) -> dict[str, Any]:

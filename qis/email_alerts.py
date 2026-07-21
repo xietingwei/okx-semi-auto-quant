@@ -54,14 +54,15 @@ def _eligible_candidates(forecasts: Iterable[dict], threshold: int) -> list[dict
     candidates: list[dict] = []
     seen: set[str] = set()
     for base in forecasts:
-        variants = base.get("strategy_variants") or [base]
+        variants = [base, *(base.get("strategy_variants") or [])]
         for variant in variants:
             strategy = variant.get("strategy") or {
                 "id": "adaptive",
                 "name": "综合自适应",
             }
             score = int(variant.get("opportunity_score") or 0)
-            if score < threshold:
+            reference = variant.get("reference") or {}
+            if score < threshold or not bool(reference.get("actionable")):
                 continue
             inst_id = str(base.get("inst_id") or variant.get("inst_id") or "")
             strategy_id = str(strategy.get("id") or "adaptive")
@@ -78,6 +79,7 @@ def _eligible_candidates(forecasts: Iterable[dict], threshold: int) -> list[dict
                     "score": score,
                     "decision": variant.get("decision") or "--",
                     "validation": variant.get("strategy_validation") or "待验证",
+                    "reference": reference,
                     "current_price": float(
                         variant.get("current_price")
                         or base.get("current_price")
@@ -109,11 +111,12 @@ def _build_message(candidates: list[dict], settings, observed_at: datetime) -> E
                 f"{index}. {item['symbol']} / {item['inst_id']}",
                 f"   机会分：{item['score']}  策略：{item['strategy']}",
                 f"   状态：{item['decision']}  验证：{item['validation']}",
+                f"   参考质量：{item['reference'].get('grade', '--')} / {item['reference'].get('state', '--')}",
                 f"   当前价：{_number(item['current_price'])}",
                 "   预测："
                 + "  ".join(
                     _horizon_text(horizons.get(key), label)
-                    for key, label in (("1w", "1周"), ("1m", "1月"), ("3m", "3月"))
+                    for key, label in (("1d", "1天"), ("3d", "3天"), ("1w", "7天"), ("2w", "14天"))
                 ),
                 "",
             ]

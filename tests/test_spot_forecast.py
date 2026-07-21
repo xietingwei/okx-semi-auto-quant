@@ -74,11 +74,11 @@ def _breakdown_candles(count: int = 260) -> list[Candle]:
     return candles
 
 
-def test_spot_forecast_has_all_horizons() -> None:
+def test_spot_forecast_has_short_term_horizons() -> None:
     forecast = SpotForecastEngine().analyze("BTC-USDT", _daily_candles())
 
     assert forecast is not None
-    assert [item.key for item in forecast.forecasts] == ["1d", "1w", "1m", "3m", "6m"]
+    assert [item.key for item in forecast.forecasts] == ["1d", "3d", "1w", "2w"]
     assert all(item.low <= item.target <= item.high for item in forecast.forecasts)
     assert max(abs(item.expected_return) for item in forecast.forecasts) <= 0.45
 
@@ -144,7 +144,7 @@ def test_rebound_candidate_scores_recent_pullback_with_support() -> None:
 
     assert forecast is not None
     assert forecast.rebound_score >= 65
-    assert forecast.decision == "跌后反弹候选"
+    assert forecast.decision == "超跌修复候选"
     assert forecast.factors["rebound"] == "强反弹候选"
     assert "高点折价" in forecast.factors["discount"]
 
@@ -162,7 +162,7 @@ def test_rebound_score_rejects_breakdown_as_bottom_fishing() -> None:
 
     assert forecast is not None
     assert forecast.rebound_score <= 35
-    assert forecast.decision == "破位风险，暂不抄底"
+    assert forecast.decision == "破位风险，短线回避"
     assert forecast.factors["rebound"] == "破位风险"
 
 
@@ -171,7 +171,7 @@ def test_low_rebound_score_does_not_mark_clean_uptrend_as_breakdown() -> None:
 
     assert forecast is not None
     assert forecast.rebound_score <= 40
-    assert forecast.decision != "破位风险，暂不抄底"
+    assert forecast.decision != "破位风险，短线回避"
     assert forecast.factors["rebound"] != "破位风险"
 
 
@@ -183,12 +183,12 @@ def test_strategy_never_recommends_buy_below_70_score() -> None:
             "up_probability": 0.65,
             "confidence": 0.65,
         }
-        for key in ("1w", "1m", "3m")
+        for key in ("1d", "3d", "1w", "2w")
     ]
 
-    assert decide_strategy(forecasts, 50, 0.2) == "中性观察"
-    assert decide_strategy(forecasts, 69, 0.2) == "观察等待触发"
-    assert decide_strategy(forecasts, 70, 0.2) == "分批关注买入"
+    assert decide_strategy(forecasts, 50, 0.2) == "方向冲突，观望"
+    assert decide_strategy(forecasts, 69, 0.2) == "等待短线触发"
+    assert decide_strategy(forecasts, 72, 0.2) == "短线条件成立"
 
 
 def test_strategy_suite_has_distinct_models_and_documented_focus() -> None:
@@ -207,16 +207,16 @@ def test_strategy_suite_has_distinct_models_and_documented_focus() -> None:
         item["id"] for item in STRATEGY_CATALOG
     ]
     assert all(item["strategy"]["direction"] for item in suite)
-    one_month_returns = {
+    three_day_returns = {
         round(
             next(
-                row for row in item["forecasts"] if row["key"] == "1m"
+                row for row in item["forecasts"] if row["key"] == "3d"
             )["expected_return"],
             8,
         )
         for item in suite
     }
-    assert len(one_month_returns) >= 3
+    assert len(three_day_returns) >= 3
 
 
 def test_spot_forecast_uses_live_price_without_polluting_closed_history() -> None:
@@ -273,7 +273,8 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert "function calculateSar" in html
     assert "function calculateSuperTrend" in html
     assert "function calculateStochRsi" in html
-    assert "'&range='+encodeURIComponent(requestedRange)" in html
+    assert "range='+encodeURIComponent(requestedRange)" in html
+    assert 'data-interval="1H"' in html
     assert 'data-main-indicator="ICHIMOKU"' in html
     assert 'data-main-indicator="SUPERTREND"' in html
     assert '<option value="MACD" selected>' in html

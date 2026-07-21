@@ -34,10 +34,17 @@ def _forecasts(score=72):
             "opportunity_score": score,
             "decision": "模拟观察",
             "strategy_validation": "冷启动待验证",
+            "reference": {
+                "grade": "A",
+                "state": "可参考",
+                "reason": "样本外验证通过",
+                "actionable": True,
+            },
             "forecasts": [
-                {"key": "1w", "expected_return": 0.03, "up_probability": 0.62},
-                {"key": "1m", "expected_return": 0.08, "up_probability": 0.68},
-                {"key": "3m", "expected_return": 0.15, "up_probability": 0.71},
+                {"key": "1d", "expected_return": 0.01, "up_probability": 0.57},
+                {"key": "3d", "expected_return": 0.03, "up_probability": 0.62},
+                {"key": "1w", "expected_return": 0.08, "up_probability": 0.68},
+                {"key": "2w", "expected_return": 0.12, "up_probability": 0.71},
             ],
         }],
     }]

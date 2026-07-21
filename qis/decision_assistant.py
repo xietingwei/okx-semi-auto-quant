@@ -199,7 +199,7 @@ def build_decision_context(
         item for item in analyses if int(item.get("position_id", -1)) in open_ids
     ]
     context = {
-        "scope": "辅助决策，不构成投资建议，不允许自动下单",
+        "scope": "仅提供1–14天短期辅助决策，不构成投资建议，不允许自动下单",
         "analysis_scope": "全局市场" if global_scope else "当前标的",
         "selected_asset": _compact_forecast(selected, horizon),
         "market_overview": _market_overview(forecasts),
@@ -211,6 +211,8 @@ def build_decision_context(
         "latest_learning_run": learning_run,
         "relationship_notes": [
             "标的预测经过 strategy_adjustments 校准后再展示",
+            "3天为主判断周期，7天用于方向确认；超过14天不提供点位预测",
+            "reference.actionable 为 false 时只能解释风险，不能建议入场",
             "持仓风险分析关联买入记录与该标的最新预测",
             "模型改进建议仅来自历史预测到期表现，不使用手工交易结果",
         ],
@@ -224,7 +226,7 @@ def build_decision_context(
         references.append(
             {
                 "type": "forecast",
-                "label": f"{selected.get('inst_id')} · {(horizon or {}).get('label', '多周期')}预测",
+                "label": f"{selected.get('inst_id')} · {(horizon or {}).get('label', '短周期')}预测",
             }
         )
     if open_positions:
@@ -239,12 +241,12 @@ def build_decision_context(
 def _market_overview(forecasts: dict[str, dict]) -> dict:
     rows = list(forecasts.values())
 
-    def month(item: dict) -> dict:
+    def short_term(item: dict) -> dict:
         return next(
             (
                 value
                 for value in item.get("forecasts", [])
-                if value.get("key") == "1m"
+                if value.get("key") == "3d"
             ),
             {},
         )
@@ -252,18 +254,19 @@ def _market_overview(forecasts: dict[str, dict]) -> dict:
     ranked = sorted(
         rows,
         key=lambda item: (
-            float(month(item).get("up_probability") or 0),
-            float(month(item).get("expected_return") or 0),
+            bool(item.get("reference", {}).get("actionable")),
+            float(short_term(item).get("up_probability") or 0),
+            float(short_term(item).get("expected_return") or 0),
         ),
         reverse=True,
     )
     weakest = sorted(
         rows,
-        key=lambda item: float(month(item).get("up_probability") or 0),
+        key=lambda item: float(short_term(item).get("up_probability") or 0),
     )
 
     def compact(item: dict) -> dict:
-        selected = month(item)
+        selected = short_term(item)
         return {
             "inst_id": item.get("inst_id"),
             "market_type": item.get("market_type"),
@@ -271,10 +274,11 @@ def _market_overview(forecasts: dict[str, dict]) -> dict:
             "daily_change": item.get("daily_change"),
             "regime": item.get("regime"),
             "decision": item.get("decision"),
+            "reference": item.get("reference"),
             "opportunity_score": item.get("opportunity_score"),
-            "one_month_return": selected.get("expected_return"),
-            "one_month_up_probability": selected.get("up_probability"),
-            "one_month_confidence": selected.get("confidence"),
+            "three_day_return": selected.get("expected_return"),
+            "three_day_up_probability": selected.get("up_probability"),
+            "three_day_confidence": selected.get("confidence"),
         }
 
     return {
@@ -290,7 +294,10 @@ def _market_overview(forecasts: dict[str, dict]) -> dict:
             else {}
         ),
         "bullish_count": sum(
-            1 for item in rows if "买入" in str(item.get("decision", ""))
+            1
+            for item in rows
+            if bool(item.get("reference", {}).get("actionable"))
+            and "条件成立" in str(item.get("decision", ""))
         ),
         "defensive_count": sum(
             1 for item in rows if "企稳" in str(item.get("decision", ""))
