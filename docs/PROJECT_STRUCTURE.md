@@ -35,6 +35,9 @@ because the launch scripts and generated dashboard paths are deliberately simple
 | `qis/us_stocks.py` | Yahoo Finance daily-candle client for external US stock opportunity candidates. |
 | `qis/config.py` | Environment-backed runtime settings. |
 
+The external benchmark and resulting priorities are recorded in
+[`docs/PROFESSIONAL_REVIEW.md`](PROFESSIONAL_REVIEW.md).
+
 ## Runtime flow
 
 ```text

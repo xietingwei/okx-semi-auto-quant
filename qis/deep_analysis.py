@@ -355,7 +355,6 @@ def _rank_row(forecast: dict[str, Any], analysis: dict[str, Any]) -> dict[str, A
         or forecast.get("data_source")
         or forecast.get("quote_source"),
         "current_price": forecast.get("current_price"),
-        "rank_score": round(_rank_score(gate), 2),
         "status": status,
         "projection_ready": projection_ready,
         "core_patterns": core_patterns,
@@ -371,27 +370,6 @@ def _rank_row(forecast: dict[str, Any], analysis: dict[str, Any]) -> dict[str, A
     }
 
 
-def _rank_score(gate: dict[str, Any]) -> float:
-    core_rate = float(gate.get("core_validation_rate") or 0)
-    all_rate = float(gate.get("validation_rate") or 0)
-    core_tested = int(gate.get("core_tested_hypotheses") or 0)
-    tested = int(gate.get("tested_hypotheses") or 0)
-    core_patterns = int(gate.get("core_patterns") or gate.get("verified_patterns") or 0)
-    if gate.get("projection_ready"):
-        return (
-            core_rate * 70
-            + min(core_tested / 40, 1) * 20
-            + min(core_patterns / 3, 1) * 10
-        )
-    if core_patterns:
-        return (
-            core_rate * 45
-            + min(core_tested / 40, 1) * 15
-            + min(core_patterns / 3, 1) * 5
-        )
-    return all_rate * 25 + min(tested / 100, 1) * 5
-
-
 def _rank_sort_key(row: dict[str, Any]) -> tuple:
     return (
         bool(row["projection_ready"]),
@@ -400,7 +378,6 @@ def _rank_sort_key(row: dict[str, Any]) -> tuple:
         int(row["core_tested_hypotheses"]),
         float(row["validation_rate"]),
         int(row["tested_hypotheses"]),
-        float(row["rank_score"]),
     )
 
 

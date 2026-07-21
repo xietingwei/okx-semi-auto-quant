@@ -206,7 +206,8 @@ def test_rank_deep_analyses_prioritizes_projection_ready_symbols() -> None:
     assert rows[0]["inst_id"] == "NVDA-USDT"
     assert rows[0]["projection_ready"] is True
     assert rows[0]["core_validation_rate"] >= 0.6
-    assert rows[0]["rank_score"] > rows[1]["rank_score"]
+    assert "rank_score" not in rows[0]
+    assert rows[0]["core_tested_hypotheses"] > 0
     assert rows[1]["inst_id"] == "NOISE-USDT"
     assert rows[1]["status"] == "低可信观察"
     assert rows[1]["core_patterns"] == 0

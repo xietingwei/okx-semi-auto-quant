@@ -297,6 +297,8 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert "/api/deep-analysis/rank?days=180" in html
     assert "function renderDeepRank" in html
     assert "deepRank:'深度分析排名'" in html
+    assert "coreSamples:'核心样本'" in html
+    assert "rankScore:'可信分'" not in html
     assert "data-detail-inst" in html
     assert "openPositionDetail(row.dataset.detailInst)" in html
     assert 'data-view="usStocks"' in html
