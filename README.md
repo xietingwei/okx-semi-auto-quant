@@ -3,7 +3,7 @@
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-106%20passing-2ea44f)](#testing)
+[![Tests](https://img.shields.io/badge/tests-107%20passing-2ea44f)](#testing)
 [![Mode](https://img.shields.io/badge/default-paper%20trading-cba45f)](#safety-boundaries)
 [![GitHub last commit](https://img.shields.io/github/last-commit/xietingwei/okx-semi-auto-quant)](https://github.com/xietingwei/okx-semi-auto-quant/commits/main)
 
@@ -97,8 +97,11 @@ Polymarket is integrated as a separate **event evidence layer**. Only public,
 read-only markets resolving inside 14 days are considered. Events must have a
 usable order book, at least the configured liquidity and 24-hour volume, a
 bounded bid-ask spread, and a non-terminal probability. This data is displayed
-and snapshotted for shadow validation, but it does not alter a forecast, create
-an opportunity score, or trigger an order.
+only when the market directly names the asset or has an explicit sector mapping.
+Global macro and geopolitical markets are never used to fill an asset with no
+specific event. All qualified observations may still be snapshotted for shadow
+validation, but they do not alter a forecast, create an opportunity score, or
+trigger an order.
 
 ## Forecast Inputs
 

@@ -3,7 +3,7 @@
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![测试](https://img.shields.io/badge/tests-106%20passing-2ea44f)](#测试)
+[![测试](https://img.shields.io/badge/tests-107%20passing-2ea44f)](#测试)
 [![模式](https://img.shields.io/badge/default-paper%20trading-cba45f)](#安全边界)
 [![最近提交](https://img.shields.io/github/last-commit/xietingwei/okx-semi-auto-quant)](https://github.com/xietingwei/okx-semi-auto-quant/commits/main)
 
@@ -77,7 +77,7 @@ QIS 围绕四项原则设计：
 
 K 线的 **1D、1M、3M、6M、1Y、ALL** 是历史查看窗口，不是预测周期。加密货币支持 5m/1H/2H/4H/12H/1D 等真实 OKX 周期，并自动合并实时与分页历史数据；外部美股数据源只有日线，界面不会把日线伪装成小时线。
 
-Polymarket 被接入为独立的 **事件证据层**。系统只读取未来 14 天内结算的公开市场，并要求盘口完整、流动性和 24 小时成交量达标、价差不过宽、概率尚未接近结算。事件数据会展示并按小时保存，用于影子验证；它不会修改预测、生成额外机会分或触发交易。
+Polymarket 被接入为独立的 **事件证据层**。系统只读取未来 14 天内结算的公开市场，并要求盘口完整、流动性和 24 小时成交量达标、价差不过宽、概率尚未接近结算。标的详情只展示直接点名该资产的事件或具有明确映射的行业事件；没有专属事件就显示“暂无标的专属事件”，不会使用全局宏观或地缘事件补位。合格观察仍可按小时保存用于影子验证，但不会修改预测、生成额外机会分或触发交易。
 
 ## 预测输入
 

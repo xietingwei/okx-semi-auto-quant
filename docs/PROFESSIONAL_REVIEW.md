@@ -58,9 +58,11 @@ that QIS should copy or embed another trading engine.
    values remain stored for evaluation but are not promoted as point forecasts.
 7. Polymarket is a public, read-only event evidence layer. Only markets inside
    the 14-day forecast boundary that pass order-book, spread, volume, liquidity,
-   and non-terminal-probability gates are displayed. Hourly snapshots are kept
-   for future shadow validation; event probabilities cannot modify forecast
-   values, scores, strategy gates, or execution.
+   and non-terminal-probability gates are displayed. Asset detail pages only
+   receive direct asset events or explicit sector mappings; macro and risk
+   events never fill an otherwise empty asset. Hourly snapshots are kept for
+   future shadow validation; event probabilities cannot modify forecast values,
+   scores, strategy gates, or execution.
 
 ## Next engineering priorities
 

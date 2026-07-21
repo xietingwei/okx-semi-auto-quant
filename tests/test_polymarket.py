@@ -110,14 +110,30 @@ def test_build_asset_intelligence_is_shadow_only_and_asset_specific() -> None:
         snapshot_stats={"capture_windows": 3, "snapshots": 8, "markets": 2},
     )
 
-    assert [event["relevance"] for event in result["BTC-USDT"]["events"]] == [
-        "direct",
-        "macro",
-    ]
-    assert [event["relevance"] for event in result["ETH-USDT"]["events"]] == ["macro"]
+    assert [event["relevance"] for event in result["BTC-USDT"]["events"]] == ["direct"]
+    assert result["ETH-USDT"]["events"] == []
+    assert result["ETH-USDT"]["status"] == "no_qualified_events"
+    assert result["ETH-USDT"]["state"] == "暂无标的专属事件"
     assert result["BTC-USDT"]["affects_forecast"] is False
     assert result["BTC-USDT"]["validation"]["affects_forecast"] is False
     assert result["BTC-USDT"]["validation"]["capture_windows"] == 3
+
+
+def test_global_events_never_fill_an_unrelated_asset() -> None:
+    fed = normalize_market(
+        _market(id="fed", question="Will the Fed cut interest rates in July?"),
+        now=NOW,
+    )
+    risk = normalize_market(
+        _market(id="risk", question="Will Israel and Iran agree to a ceasefire?"),
+        now=NOW,
+    )
+    assert fed and risk
+
+    result = build_asset_intelligence([fed, risk], ["SOL-USDT", "AAPL-US"], updated_at=NOW)
+
+    assert result["SOL-USDT"]["events"] == []
+    assert result["AAPL-US"]["events"] == []
 
 
 def test_direct_event_ladder_prioritizes_decision_relevant_probability() -> None:

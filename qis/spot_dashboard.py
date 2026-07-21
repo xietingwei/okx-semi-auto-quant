@@ -201,8 +201,8 @@ HTML = r"""<!DOCTYPE html>
       eventIntelligence:'短期事件概率',eventShadowNote:'只读影子证据，不直接改变预测，也不触发交易',
       eventDirect:'标的直连',eventSector:'行业事件',eventMacro:'宏观事件',eventRisk:'风险事件',
       yesProbability:'YES 概率',eventChange24h:'24H 变化',eventSpread:'盘口价差',eventLiquidity:'流动性',
-      eventResolve:'结算时间',eventOpen:'查看市场 ↗',noQualifiedEvents:'暂无合格关联事件',
-      noQualifiedEventsNote:'未来 14 天内没有同时通过盘口、价差、成交量和流动性闸门的关联事件。',
+      eventResolve:'结算时间',eventOpen:'查看市场 ↗',noQualifiedEvents:'暂无标的专属事件',
+      noQualifiedEventsNote:'未来 14 天内没有通过质量闸门的标的直接事件或明确行业事件，不使用全局事件补位。',
       eventSourceLive:'公开市场实时数据',eventSourceCache:'公开市场缓存数据',eventSourceUnavailable:'公开市场暂不可用',eventSourceDisabled:'事件情报未启用',
       shadowCollection:'影子采集中',captureSummary:'{windows} 个采集窗口 · {snapshots} 条快照'
     });
@@ -218,7 +218,7 @@ HTML = r"""<!DOCTYPE html>
       eventIntelligence:'Short-term Event Probabilities',eventShadowNote:'Read-only shadow evidence; never changes forecasts or triggers trades',
       eventDirect:'Direct',eventSector:'Sector',eventMacro:'Macro',eventRisk:'Risk',yesProbability:'YES probability',
       eventChange24h:'24H change',eventSpread:'Bid-ask spread',eventLiquidity:'Liquidity',eventResolve:'Resolves',eventOpen:'Open market ↗',
-      noQualifiedEvents:'No qualified related events',noQualifiedEventsNote:'No related event inside 14 days currently passes the order-book, spread, volume and liquidity gates.',
+      noQualifiedEvents:'No asset-specific events',noQualifiedEventsNote:'No direct or clearly mapped sector event inside 14 days passes the quality gates. Global events are not used as filler.',
       eventSourceLive:'Live public market data',eventSourceCache:'Cached public market data',eventSourceUnavailable:'Public market data unavailable',eventSourceDisabled:'Event intelligence disabled',
       shadowCollection:'Shadow collection',captureSummary:'{windows} capture windows · {snapshots} snapshots'
     });
@@ -370,7 +370,7 @@ HTML = r"""<!DOCTYPE html>
     function renderPolymarket(){
       const intel=asset?.polymarket||{},rawEvents=Array.isArray(intel.events)?intel.events:[],relevanceRank={direct:4,sector:3,macro:2,risk:1},information=item=>['direct','sector'].includes(item.relevance)?Math.min(Number(item.yes_probability)||0,1-(Number(item.yes_probability)||0)):0,events=rawEvents.slice().sort((a,b)=>(relevanceRank[b.relevance]||0)-(relevanceRank[a.relevance]||0)||information(b)-information(a)||(+b.volume_24h||0)-(+a.volume_24h||0)),validation=intel.validation||{},sourceLabels={live:'eventSourceLive',cache:'eventSourceCache',unavailable:'eventSourceUnavailable',disabled:'eventSourceDisabled'},state=intel.status==='shadow_observation'?t('shadowCollection'):intel.status==='disabled'?t('eventSourceDisabled'):intel.status==='unavailable'?t('eventSourceUnavailable'):t('noQualifiedEvents'),updated=intel.updated_at?new Date(intel.updated_at).toLocaleString(locale==='zh'?'zh-CN':'en-US',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Shanghai'}):'';
       $('eventState').textContent=state;
-      $('eventMeta').textContent=[t(sourceLabels[intel.source_state]||'eventSourceUnavailable'),t('captureSummary',{windows:validation.capture_windows||0,snapshots:validation.snapshots||0}),updated].filter(Boolean).join(' · ');
+      $('eventMeta').textContent=[t(sourceLabels[intel.source_state]||'eventSourceUnavailable'),events.length?t('captureSummary',{windows:validation.capture_windows||0,snapshots:validation.snapshots||0}):'',updated].filter(Boolean).join(' · ');
       if(!events.length){$('eventList').innerHTML='<div class="event-empty"><strong>'+t('noQualifiedEvents')+'</strong>'+t('noQualifiedEventsNote')+'</div>';return}
       const relevanceLabels={direct:'eventDirect',sector:'eventSector',macro:'eventMacro',risk:'eventRisk'};
       $('eventList').innerHTML=events.map(item=>{

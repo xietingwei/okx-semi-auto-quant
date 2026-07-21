@@ -289,10 +289,7 @@ def build_asset_intelligence(
         candidates = [
             item
             for item in qualified
-            if (
-                symbol in (item.get("mapped_symbols") or [])
-                or item.get("relevance") in {"macro", "risk"}
-            )
+            if symbol in (item.get("mapped_symbols") or [])
         ]
         candidates.sort(
             key=lambda item: (
@@ -317,7 +314,7 @@ def build_asset_intelligence(
         elif events:
             status, state = "shadow_observation", "事件证据观察中"
         else:
-            status, state = "no_qualified_events", "暂无合格关联事件"
+            status, state = "no_qualified_events", "暂无标的专属事件"
         result[inst_id] = {
             "status": status,
             "state": state,

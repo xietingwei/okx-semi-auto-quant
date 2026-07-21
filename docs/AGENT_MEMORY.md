@@ -65,10 +65,12 @@ the web UI without explicit user direction.
 - Polymarket public market data is integrated as a short-term, read-only event
   evidence layer in `qis/polymarket.py`. `spot-watch` fetches markets resolving
   inside 14 days, applies transparent order-book/spread/volume/liquidity gates,
-  maps direct, sector, macro, and risk events to assets, and attaches the result
-  under each forecast's `polymarket` key. SQLite stores at most one snapshot per
-  market per UTC hour for future shadow validation. This evidence must not alter
-  forecast values, opportunity scores, strategy gates, or order execution.
+  attaches only direct asset events and explicit sector mappings under each
+  forecast's `polymarket` key. Macro and geopolitical markets may be collected
+  for shadow research but must never fill an unrelated asset's empty event list.
+  SQLite stores at most one snapshot per market per UTC hour for future shadow
+  validation. This evidence must not alter forecast values, opportunity scores,
+  strategy gates, or order execution.
 - The asset detail chart is a professional, range-aware candlestick terminal.
   `GET /api/spot/candles` accepts `range=1D|1M|3M|6M|1Y|ALL`; crypto ranges use
   5m, 4H, 12H, and paginated daily OKX history as appropriate. The UI separates
