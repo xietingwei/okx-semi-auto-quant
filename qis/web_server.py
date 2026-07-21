@@ -32,6 +32,17 @@ CANDLE_RANGE_SPECS = {
     "ALL": {"bar": "1D", "days": None, "limit": 1_500},
 }
 
+# A custom hourly request is used by the professional chart when the user
+# needs a short intraday view. Keep the default bounded to one week; callers
+# asking for a longer range should use the named range specs above.
+CANDLE_BAR_LIMITS = {
+    "1H": 168,
+    "2H": 168,
+    "4H": 168,
+    "6H": 168,
+    "12H": 168,
+}
+
 
 class LiveQuoteService:
     def __init__(self, ttl_seconds: float = 2.0) -> None:
@@ -115,8 +126,14 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                 self._json({"ok": False, "error": "unsupported candle range"}, 400)
                 return
             range_spec = CANDLE_RANGE_SPECS.get(range_key)
-            raw_bar = str((query.get("bar") or ["1D"])[0])
-            bar = str(range_spec["bar"]) if range_spec else _normalize_candle_bar(raw_bar)
+            requested_bar = str((query.get("bar") or [""])[0])
+            normalized_requested_bar = _normalize_candle_bar(requested_bar) if requested_bar else ""
+            # A named range supplies a sensible OKX-style default interval, but
+            # the chart can explicitly override it (for example 1D + 1H).
+            # Keeping the override server-side prevents the UI from showing an
+            # hourly label while the API silently returns the default 5m/4H
+            # series.
+            bar = normalized_requested_bar or (str(range_spec["bar"]) if range_spec else "1D")
             if not bar:
                 self._json({"ok": False, "error": "unsupported candle interval"}, 400)
                 return
@@ -132,6 +149,18 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
             )
             cached_candles = _forecast_history_candles(analysis_forecast)
             if _is_external_equity_history(analysis_forecast):
+                # Yahoo-backed equities have daily candles only. A raw
+                # intraday ``bar`` request must fail explicitly instead of
+                # silently returning daily rows labelled as hourly data.
+                if bar != "1D":
+                    self._json(
+                        {
+                            "ok": False,
+                            "error": "intraday candles unavailable for external equity",
+                        },
+                        400,
+                    )
+                    return
                 if not cached_candles:
                     self._json({"ok": False, "error": "no cached daily candles"}, 503)
                     return
@@ -153,23 +182,34 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                         "coverage": len(candles),
                         "analysis_source_inst_id": analysis_forecast.get("analysis_source_inst_id"),
                         "candles": _serialize_candles(candles),
+                        "degraded": False,
                         **_candle_span(candles),
                     },
                 )
                 return
-            limit = int(range_spec["limit"]) if range_spec else (168 if bar == "1H" else 300)
+            limit = _candle_limit(range_spec, bar, bool(normalized_requested_bar))
+            degraded = False
             try:
                 client = OkxClient()
-                okx_candles = (
-                    client.public_history_candles(inst_id, bar, limit=limit)
-                    if range_spec
-                    else client.public_candles(inst_id, bar, limit=limit)
-                )
+                range_fetcher = getattr(client, "public_range_candles", None)
+                if (range_spec or limit > 300) and callable(range_fetcher):
+                    # Fetch the live edge plus paginated history. This keeps
+                    # the chart current even though history-candles can lag.
+                    okx_candles = range_fetcher(inst_id, bar, limit=limit)
+                elif range_spec or normalized_requested_bar:
+                    # Compatibility fallback for light-weight test clients and
+                    # older integrations that only expose history-candles.
+                    okx_candles = client.public_history_candles(inst_id, bar, limit=limit)
+                elif limit > 300 and callable(range_fetcher):
+                    okx_candles = range_fetcher(inst_id, bar, limit=limit)
+                else:
+                    okx_candles = client.public_candles(inst_id, bar, limit=limit)
             except OkxError as exc:
                 if bar != "1D" or not cached_candles:
                     self._json({"ok": False, "error": str(exc)}, 503)
                     return
                 okx_candles = []
+                degraded = True
                 source = f"{analysis_forecast.get('quote_source') or 'cached daily history'} · OKX unavailable"
             else:
                 source = "OKX market candles"
@@ -189,6 +229,8 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                     "source": source,
                     "coverage": len(candles),
                     "candles": _serialize_candles(candles),
+                    "degraded": degraded,
+                    "warning": "OKX unavailable; using cached daily history" if degraded else "",
                     **_candle_span(candles),
                 }
             )
@@ -518,9 +560,20 @@ def _candle_span(candles: list[Candle]) -> dict[str, str]:
 
 
 def _merge_candles(fallback: list[Candle], primary: list[Candle]) -> list[Candle]:
-    by_day = {item.ts.date().isoformat(): item for item in fallback}
-    by_day.update({item.ts.date().isoformat(): item for item in primary})
-    return sorted(by_day.values(), key=lambda item: item.ts)
+    # Use the exact interval timestamp. Date-level de-duplication silently
+    # discards 23 of 24 hourly candles when this helper is reused for an
+    # intraday response.
+    by_ts = {
+        int(item.ts.timestamp() * 1000): item
+        for item in fallback
+    }
+    by_ts.update(
+        {
+            int(item.ts.timestamp() * 1000): item
+            for item in primary
+        }
+    )
+    return sorted(by_ts.values(), key=lambda item: item.ts)
 
 
 def _serialize_candles(candles: list[Candle]) -> list[dict]:

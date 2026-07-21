@@ -5,6 +5,7 @@ from qis.models import Candle
 from qis.web_server import (
     CANDLE_RANGE_SPECS,
     QisRequestHandler,
+    _merge_candles,
     _rebase_forecast,
     _rebase_forecast_prices,
 )
@@ -308,6 +309,101 @@ def test_spot_candles_route_maps_one_day_range_to_five_minute_history(monkeypatc
     assert payload["coverage"] == 12
     assert payload["from"] == intraday[0].ts.isoformat()
     assert payload["to"] == intraday[-1].ts.isoformat()
+
+
+def test_spot_candles_route_uses_live_edge_range_fetcher_when_available(monkeypatch) -> None:
+    handler = QisRequestHandler.__new__(QisRequestHandler)
+    handler.path = "/api/spot/candles?inst_id=BTC-USDT&range=1M"
+    payloads = []
+    forecast = _route_forecast(
+        "BTC-USDT",
+        symbol="BTC",
+        count=220,
+        source="OKX ticker",
+        market_type="现货",
+    )
+    start = datetime(2026, 6, 20, tzinfo=timezone.utc)
+    candles = [
+        Candle(start + timedelta(hours=index * 4), 100, 102, 99, 101, 1000)
+        for index in range(4)
+    ]
+
+    class StubOkxClient:
+        @staticmethod
+        def public_range_candles(inst_id: str, bar: str, limit: int) -> list[Candle]:
+            assert inst_id == "BTC-USDT"
+            assert bar == "4H"
+            assert limit == 186
+            return candles
+
+    monkeypatch.setattr(QisRequestHandler, "_forecasts", lambda self: {"BTC-USDT": forecast})
+    monkeypatch.setattr("qis.web_server.OkxClient", StubOkxClient)
+    monkeypatch.setattr(
+        QisRequestHandler,
+        "_json",
+        lambda self, payload, status=200: payloads.append((status, payload)),
+    )
+
+    QisRequestHandler.do_GET(handler)
+
+    status, payload = payloads[0]
+    assert status == 200
+    assert payload["source"] == "OKX market candles"
+    assert payload["degraded"] is False
+    assert payload["bar"] == "4H"
+    assert payload["from"] == candles[0].ts.isoformat()
+    assert payload["to"] == candles[-1].ts.isoformat()
+
+
+def test_spot_candles_route_rejects_raw_hourly_external_equity_request(monkeypatch) -> None:
+    handler = QisRequestHandler.__new__(QisRequestHandler)
+    handler.path = "/api/spot/candles?inst_id=TSLA-US&bar=1H"
+    payloads = []
+    forecast = _route_forecast(
+        "TSLA-US",
+        symbol="TSLA",
+        count=220,
+        source="Yahoo Finance 日线 · NMS",
+        market_type="美股现货",
+    )
+
+    monkeypatch.setattr(QisRequestHandler, "_forecasts", lambda self: {"TSLA-US": forecast})
+    monkeypatch.setattr(
+        QisRequestHandler,
+        "_json",
+        lambda self, payload, status=200: payloads.append((status, payload)),
+    )
+
+    QisRequestHandler.do_GET(handler)
+
+    assert payloads == [
+        (
+            400,
+            {
+                "ok": False,
+                "error": "intraday candles unavailable for external equity",
+            },
+        )
+    ]
+
+
+def test_merge_candles_preserves_intraday_timestamps() -> None:
+    start = datetime(2026, 7, 20, tzinfo=timezone.utc)
+    fallback = [
+        Candle(start, 100, 101, 99, 100, 10),
+        Candle(start + timedelta(hours=1), 100, 101, 99, 100, 10),
+    ]
+    primary = [
+        Candle(start + timedelta(hours=1), 101, 102, 100, 101, 11),
+        Candle(start + timedelta(hours=2), 101, 103, 100, 102, 12),
+    ]
+
+    merged = _merge_candles(fallback, primary)
+
+    assert [item.ts for item in merged] == [
+        start + timedelta(hours=index) for index in range(3)
+    ]
+    assert merged[1].close == 101
 
 
 def test_candle_ranges_use_distinct_market_intervals() -> None:

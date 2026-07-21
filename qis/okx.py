@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import time
 import urllib.parse
 import urllib.request
@@ -28,13 +29,45 @@ class OkxClient:
         self.simulated = simulated
 
     def public_candles(self, inst_id: str, bar: str = "15m", limit: int = 100) -> list[Candle]:
+        requested = max(1, min(int(limit), 300))
         data = self._request(
             "GET",
             "/api/v5/market/candles",
-            params={"instId": inst_id, "bar": bar, "limit": str(limit)},
+            params={"instId": inst_id, "bar": bar, "limit": str(requested)},
             auth=False,
         )
         return self._parse_candles(data)
+
+    def public_range_candles(
+        self,
+        inst_id: str,
+        bar: str = "1D",
+        limit: int = 300,
+    ) -> list[Candle]:
+        """Return the newest ``limit`` candles without the 300-row API gap.
+
+        ``market/candles`` is the correct source for the live edge, while
+        ``market/history-candles`` is needed when a range is longer than the
+        latest endpoint's page.  The history endpoint can lag the live edge by
+        a few candles, so querying it alone makes a 1D/1M chart appear stale.
+        Fetch both, merge by exact candle timestamp, and keep the newest
+        requested rows.
+        """
+        requested = max(1, min(int(limit), 2_000))
+        latest = self.public_candles(inst_id, bar, min(requested, 300))
+        by_ts = {
+            int(candle.ts.timestamp() * 1000): candle
+            for candle in latest
+        }
+        if len(by_ts) < requested:
+            history = self.public_history_candles(inst_id, bar, requested)
+            historical_by_ts = {
+                int(candle.ts.timestamp() * 1000): candle
+                for candle in history
+            }
+            historical_by_ts.update(by_ts)
+            by_ts = historical_by_ts
+        return sorted(by_ts.values(), key=lambda item: item.ts)[-requested:]
 
     def public_history_candles(
         self,
@@ -51,7 +84,13 @@ class OkxClient:
         requested = max(1, min(int(limit), 2_000))
         candles_by_ts: dict[int, Candle] = {}
         after: str | None = None
-        while len(candles_by_ts) < requested:
+        # A short page is not necessarily the end of history (the endpoint may
+        # return fewer rows around a listing boundary). Continue while the
+        # cursor advances, with a bounded page count as a network safety net.
+        max_pages = max(8, math.ceil(requested / 100) + 4)
+        for _ in range(max_pages):
+            if len(candles_by_ts) >= requested:
+                break
             page_limit = min(300, requested - len(candles_by_ts))
             params = {"instId": inst_id, "bar": bar, "limit": str(page_limit)}
             if after:
@@ -70,7 +109,7 @@ class OkxClient:
                 candles_by_ts[int(candle.ts.timestamp() * 1000)] = candle
             oldest = min(page, key=lambda item: item.ts)
             next_after = str(int(oldest.ts.timestamp() * 1000))
-            if len(candles_by_ts) == before_count or next_after == after or len(page) < page_limit:
+            if len(candles_by_ts) == before_count or next_after == after:
                 break
             after = next_after
         return sorted(candles_by_ts.values(), key=lambda item: item.ts)[-requested:]
@@ -79,16 +118,31 @@ class OkxClient:
     def _parse_candles(data: list) -> list[Candle]:
         candles = []
         for row in data:
-            candles.append(
-                Candle(
+            try:
+                # OKX occasionally includes an empty/malformed row while an
+                # instrument is being listed or a market endpoint is degraded.
+                # Skip that row rather than failing the complete chart payload.
+                candle = Candle(
                     ts=datetime.fromtimestamp(int(row[0]) / 1000, tz=timezone.utc),
                     open=float(row[1]),
                     high=float(row[2]),
                     low=float(row[3]),
                     close=float(row[4]),
-                    volume=float(row[5]),
+                    volume=float(row[5] or 0),
                 )
-            )
+            except (IndexError, TypeError, ValueError, OverflowError):
+                continue
+            if candle.ts is not None and all(
+                math.isfinite(value)
+                for value in (
+                    candle.open,
+                    candle.high,
+                    candle.low,
+                    candle.close,
+                    candle.volume,
+                )
+            ):
+                candles.append(candle)
         return sorted(candles, key=lambda item: item.ts)
 
     def balance_equity(self, ccy: str = "USDT") -> float | None:
