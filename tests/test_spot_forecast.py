@@ -318,6 +318,10 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert "deletePosition" in html
     assert "deleteConfirm" in html
     assert "assistantTopButton" not in html
+    assert 'id="eventIntel"' in html
+    assert 'id="eventList"' in html
+    assert "function renderPolymarket()" in html
+    assert "eventShadowNote:'只读影子证据，不直接改变预测，也不触发交易'" in html
     assert "spirit-button" not in html
     assert "/api/assistant/" not in html
     assert "模型诊断" not in html

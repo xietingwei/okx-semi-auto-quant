@@ -1,6 +1,6 @@
 # Agent memory for QIS handoff
 
-Last updated: 2026-07-20.
+Last updated: 2026-07-21.
 
 ## Product intent
 
@@ -62,6 +62,13 @@ the web UI without explicit user direction.
   reliability ranking; deep-analysis output includes the selected asset's
   shadow payload. It is shadow-only and must not replace manual trade decisions
   or trigger automatic orders.
+- Polymarket public market data is integrated as a short-term, read-only event
+  evidence layer in `qis/polymarket.py`. `spot-watch` fetches markets resolving
+  inside 14 days, applies transparent order-book/spread/volume/liquidity gates,
+  maps direct, sector, macro, and risk events to assets, and attaches the result
+  under each forecast's `polymarket` key. SQLite stores at most one snapshot per
+  market per UTC hour for future shadow validation. This evidence must not alter
+  forecast values, opportunity scores, strategy gates, or order execution.
 - The asset detail chart is a professional, range-aware candlestick terminal.
   `GET /api/spot/candles` accepts `range=1D|1M|3M|6M|1Y|ALL`; crypto ranges use
   5m, 4H, 12H, and paginated daily OKX history as appropriate. The UI separates
@@ -80,6 +87,7 @@ the web UI without explicit user direction.
 | `/api/deep-analysis` | `GET` | Returns selected-symbol daily reviews, hypothesis validations, scenarios, and super-brain patterns. |
 | `/api/deep-analysis/rank` | `GET` | Ranks all cached symbols by deep-analysis reliability, core validation rate, and sample depth. |
 | `/api/shadow-brain/rank` | `GET` | Ranks cached symbols by shadow neural validation edge, confidence, and projection gate. |
+| `/api/polymarket/events` | `GET` | Returns the selected symbol's cached, read-only event intelligence and shadow-validation state. |
 | `/api/spot/buy` | `POST` | Opens a manual spot position record. |
 | `/api/spot/sell` | `POST` | Closes a manual spot position record with realized PnL. |
 | `/api/spot/delete` | `POST` | Permanently deletes a manual spot position record. |

@@ -137,6 +137,42 @@ def test_hourly_forecast_snapshot_is_deduplicated(tmp_path: Path) -> None:
     assert evaluation["overall"]["pending"] == 1
 
 
+def test_polymarket_snapshots_are_hourly_and_auditable(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "qis.sqlite3")
+    event = {
+        "market_id": "btc-july",
+        "question": "Will Bitcoin reach $67,500 in July?",
+        "slug": "btc-july",
+        "end_at": "2026-07-31T00:00:00+00:00",
+        "relevance": "direct",
+        "mapped_symbols": ["BTC"],
+        "yes_probability": 0.565,
+        "change_1h": -0.02,
+        "change_24h": 0.09,
+        "best_bid": 0.56,
+        "best_ask": 0.57,
+        "spread": 0.01,
+        "volume_24h": 94_000,
+        "liquidity": 56_000,
+        "quality_state": "qualified",
+        "eligible": True,
+        "market_url": "https://polymarket.com/event/btc-july",
+        "resolution_source": "",
+    }
+    observed = datetime(2026, 7, 21, 8, 17, tzinfo=timezone.utc)
+
+    assert storage.record_polymarket_snapshots([event], observed) == 1
+    assert storage.record_polymarket_snapshots([event], observed + timedelta(minutes=30)) == 0
+    assert storage.record_polymarket_snapshots([event], observed + timedelta(hours=1)) == 1
+
+    assert storage.polymarket_snapshot_stats() == {
+        "snapshots": 2,
+        "markets": 1,
+        "capture_windows": 2,
+        "latest_at": "2026-07-21T09:00:00+00:00",
+    }
+
+
 def test_forecast_versions_can_share_same_hour_without_mixing_learning(
     tmp_path: Path,
 ) -> None:

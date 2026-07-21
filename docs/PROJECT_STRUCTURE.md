@@ -27,6 +27,7 @@ because the launch scripts and generated dashboard paths are deliberately simple
 | `qis/spot_forecast.py` | Spot forecast model, strategy variants, opportunity scoring, and model versioning. |
 | `qis/short_term.py` | Canonical candle cleanup, short-term data quality scoring, and evidence-gate context. |
 | `qis/ml_shadow.py` | Dependency-free shadow neural learner, validation gate, and all-asset shadow ranking. |
+| `qis/polymarket.py` | Public Polymarket client, event quality gates, asset mapping, cache, and shadow-intelligence payloads. |
 | `qis/deep_analysis.py` | Per-symbol daily deep analysis, hypothesis validation, and super-brain pattern summaries. |
 | `qis/position_risk.py` | Holding-level sentinel analysis: stops, target distance, risk score, and sell timing. |
 | `qis/decision_assistant.py` | OpenAI-compatible LLM request/streaming and decision-context construction. |
@@ -44,6 +45,7 @@ The external benchmark and resulting priorities are recorded in
 scripts/start.sh
   ├─ python3 -m qis spot-watch
   │    ├─ fetches OKX/public market data
+  │    ├─ fetches qualified short-term Polymarket event evidence
   │    ├─ attaches shadow neural predictions to cached forecasts
   │    ├─ writes data/spot_forecasts.json
   │    └─ renders data/index.html from qis/spot_dashboard.py
@@ -53,6 +55,7 @@ scripts/start.sh
   │    ├─ exposes /api/deep-analysis for selected-symbol daily reviews
   │    ├─ exposes /api/deep-analysis/rank for all-symbol reliability ranking
   │    ├─ exposes /api/shadow-brain/rank for shadow neural reliability ranking
+  │    ├─ exposes /api/polymarket/events for selected-symbol event evidence
   │    └─ streams /api/assistant/stream
   └─ python3 -m qis doctor
 ```

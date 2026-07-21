@@ -3,7 +3,7 @@
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![测试](https://img.shields.io/badge/tests-98%20passing-2ea44f)](#测试)
+[![测试](https://img.shields.io/badge/tests-106%20passing-2ea44f)](#测试)
 [![模式](https://img.shields.io/badge/default-paper%20trading-cba45f)](#安全边界)
 [![最近提交](https://img.shields.io/github/last-commit/xietingwei/okx-semi-auto-quant)](https://github.com/xietingwei/okx-semi-auto-quant/commits/main)
 
@@ -42,6 +42,7 @@ QIS 围绕四项原则设计：
 | 策略工作台 | 对比综合自适应、趋势跟随、突破确认和均值回归策略 |
 | 实时价格预测 | 基于 OKX 最新成交价重新计算特征、概率、收益和目标价 |
 | 市场环境 | 综合盘口深度、资金费率、持仓量、成交量结构、宏观数据和市场广度 |
+| Polymarket 事件情报 | 展示未来 1–14 天合格事件的真实概率、24 小时变化、价差、流动性和结算时间，且只作为只读影子证据 |
 | 深度分析 | 数据源历史足够时基于最多 180 根日 K，逐日结合量化事实和外部消息生成原因推测，经过后续走势验证后汇总为超级大脑模式库 |
 | 全标深度排名 | 按核心命中率、样本深度和可推演状态对全部标的排序，识别当前预测结构最可靠的标 |
 | 神经网络影子大脑 | 以影子模式运行无外部依赖的小型神经学习器，按验证优势排序，但不替代交易建议 |
@@ -75,6 +76,8 @@ QIS 围绕四项原则设计：
 历史校准按“标的 + 模型版本”完全隔离：BTC 的结果不能压缩 ETH，美股样本也不能校准加密货币；实时行情刷新会从保存的模型原始输出重新校准，不会对已校准结果再次压缩。如果某个标的没有超过自身的简单基准，或者校准后变动低于对应周期的短线噪声阈值，界面会明确显示 **暂无有效方向**，并改为展示一倍标准差的常态波动区间，不再把很小的收缩值包装成有参考价值的点预测。
 
 K 线的 **1D、1M、3M、6M、1Y、ALL** 是历史查看窗口，不是预测周期。加密货币支持 5m/1H/2H/4H/12H/1D 等真实 OKX 周期，并自动合并实时与分页历史数据；外部美股数据源只有日线，界面不会把日线伪装成小时线。
+
+Polymarket 被接入为独立的 **事件证据层**。系统只读取未来 14 天内结算的公开市场，并要求盘口完整、流动性和 24 小时成交量达标、价差不过宽、概率尚未接近结算。事件数据会展示并按小时保存，用于影子验证；它不会修改预测、生成额外机会分或触发交易。
 
 ## 预测输入
 
@@ -116,6 +119,9 @@ flowchart LR
     Factors --> Engine
     Engine --> Cal["前向验证与校准"]
     Cal --> API["本地 HTTP API"]
+    PM["Polymarket 公开市场"] --> Evidence["只读事件证据"]
+    Evidence --> API
+    Evidence --> DB
     API --> UI["机会雷达 / 策略工作台"]
     API --> Sentinel["持仓哨兵"]
     API --> Copilot["决策小精灵"]
@@ -178,6 +184,19 @@ OKX_SIMULATED=1
 QIS_MODE=paper
 QIS_SPOT_AUTO_DISCOVER=1
 QIS_SPOT_MAX_ASSETS=60
+```
+
+### Polymarket 事件证据
+
+无需钱包或 API Key。该集成只读取公开市场数据，并与预测和执行路径保持隔离。
+
+```ini
+QIS_POLYMARKET_ENABLED=1
+QIS_POLYMARKET_HORIZON_DAYS=14
+QIS_POLYMARKET_MAX_EVENTS=5
+QIS_POLYMARKET_MIN_LIQUIDITY=25000
+QIS_POLYMARKET_MIN_VOLUME_24H=10000
+QIS_POLYMARKET_MAX_SPREAD=0.05
 ```
 
 ### 风控参数
@@ -326,7 +345,7 @@ python3 -m compileall -q qis tests
 git diff --check
 ```
 
-当前测试覆盖预测、策略隔离、实时价格重算、市场因子、历史校准、数据存储、持仓退出、API 行为和大模型上下文构建。
+当前测试覆盖预测、策略隔离、实时价格重算、市场因子、历史校准、Polymarket 质量闸门与标的映射、数据存储、持仓退出、API 行为和大模型上下文构建。
 
 ## 参与贡献
 

@@ -22,6 +22,14 @@ from qis.market_factors import build_market_contexts, global_market_environment,
 from qis.models import Mode
 from qis.okx import OkxClient, OkxError
 from qis.portal import render_portal
+from qis.polymarket import (
+    PolymarketClient,
+    PolymarketError,
+    build_asset_intelligence,
+    collect_event_catalog,
+    load_catalog,
+    save_catalog,
+)
 from qis.risk import RiskEngine, RiskLimits
 from qis.runner import Runner
 from qis.storage import Storage
@@ -250,6 +258,11 @@ def _render_spot(settings, output: Path) -> None:
         adjustments,
         advice,
     )
+    calibrated_forecasts = _attach_polymarket_intelligence(
+        settings,
+        storage,
+        calibrated_forecasts,
+    )
     calibrated_forecasts = attach_shadow_brain(calibrated_forecasts)
     path = render_spot_dashboard(calibrated_forecasts, output)
     print(f"Spot dashboard written to {path.resolve()} ({len(forecasts)} assets)", flush=True)
@@ -259,6 +272,89 @@ def _render_spot(settings, output: Path) -> None:
             print(f"Email opportunity alert sent ({notified} candidates)", flush=True)
     except Exception as exc:
         print(f"Email opportunity alert failed: {exc}", flush=True)
+
+
+def _attach_polymarket_intelligence(
+    settings,
+    storage: Storage,
+    forecasts: list[dict],
+) -> list[dict]:
+    now = datetime.now(timezone.utc)
+    inst_ids = [str(item["inst_id"]) for item in forecasts]
+    cache_path = settings.db_path.parent / "polymarket_events.json"
+    source_state = "disabled"
+    source_error = ""
+    catalog: list[dict] = []
+    updated_at = now
+    if settings.polymarket_enabled:
+        try:
+            catalog = collect_event_catalog(
+                PolymarketClient(settings.polymarket_timeout_seconds),
+                now=now,
+                horizon_days=settings.polymarket_horizon_days,
+                min_liquidity=settings.polymarket_min_liquidity,
+                min_volume_24h=settings.polymarket_min_volume_24h,
+                max_spread=settings.polymarket_max_spread,
+            )
+            source_state = "live"
+            save_catalog(cache_path, catalog, now)
+            print(
+                "Polymarket event intelligence: "
+                f"{sum(bool(item.get('eligible')) for item in catalog)} qualified / "
+                f"{len(catalog)} relevant markets",
+                flush=True,
+            )
+        except (PolymarketError, OSError) as exc:
+            source_error = str(exc)
+            cached, captured_at = load_catalog(cache_path)
+            catalog = _current_cached_events(
+                cached,
+                now,
+                settings.polymarket_horizon_days,
+            )
+            if catalog:
+                source_state = "cache"
+                updated_at = captured_at or now
+                print(f"Polymarket degraded to cached events: {exc}", flush=True)
+            else:
+                source_state = "unavailable"
+                print(f"Polymarket event intelligence unavailable: {exc}", flush=True)
+        storage.record_polymarket_snapshots(catalog, captured_at=now)
+    stats = storage.polymarket_snapshot_stats()
+    intelligence = build_asset_intelligence(
+        catalog,
+        inst_ids,
+        updated_at=updated_at,
+        max_events=settings.polymarket_max_events,
+        snapshot_stats=stats,
+        source_state=source_state,
+        source_error=source_error,
+    )
+    return [
+        {**forecast, "polymarket": intelligence[str(forecast["inst_id"])]}
+        for forecast in forecasts
+    ]
+
+
+def _current_cached_events(
+    events: list[dict],
+    now: datetime,
+    horizon_days: int,
+) -> list[dict]:
+    latest = now.timestamp() + max(1, horizon_days) * 86_400
+    current = []
+    for event in events:
+        try:
+            end_at = datetime.fromisoformat(
+                str(event.get("end_at") or "").replace("Z", "+00:00")
+            )
+        except ValueError:
+            continue
+        if end_at.tzinfo is None:
+            end_at = end_at.replace(tzinfo=timezone.utc)
+        if now.timestamp() < end_at.timestamp() <= latest:
+            current.append(event)
+    return current
 
 
 def _fetch_us_stock_histories(symbols: tuple[str, ...]) -> dict[str, UsStockHistory]:

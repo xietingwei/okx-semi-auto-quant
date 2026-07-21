@@ -134,6 +134,21 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
             forecasts = self._live_forecasts()
             self._json({"forecasts": list(forecasts.values())})
             return
+        if path == "/api/polymarket/events":
+            query = parse_qs(urlparse(self.path).query)
+            inst_id = str((query.get("inst_id") or [""])[0])
+            forecast = self._forecasts().get(inst_id)
+            if forecast is None:
+                self._json({"ok": False, "error": "unknown instrument"}, 404)
+                return
+            self._json(
+                {
+                    "ok": True,
+                    "inst_id": inst_id,
+                    "intelligence": forecast.get("polymarket") or {},
+                }
+            )
+            return
         if path == "/api/spot/candles":
             query = parse_qs(urlparse(self.path).query)
             inst_id = str((query.get("inst_id") or [""])[0])
@@ -525,6 +540,7 @@ def _deep_analysis_forecast(forecast: dict, forecasts: dict[str, dict]) -> dict:
     merged["inst_id"] = forecast.get("inst_id") or best.get("inst_id")
     merged["symbol"] = forecast.get("symbol") or best.get("symbol")
     merged["analysis_source_inst_id"] = best.get("inst_id")
+    merged["polymarket"] = forecast.get("polymarket") or best.get("polymarket") or {}
     return merged
 
 

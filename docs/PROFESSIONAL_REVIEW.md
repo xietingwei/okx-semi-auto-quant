@@ -30,6 +30,13 @@ that QIS should copy or embed another trading engine.
   keep price and secondary studies on independent visual panes. QIS follows
   that layout: candles and overlays remain in the main pane while volume,
   momentum, and volatility studies use a separate scale.
+- [Polymarket market-data overview](https://docs.polymarket.com/market-data/overview)
+  separates event discovery from public CLOB prices and order books. Its
+  [resolution documentation](https://docs.polymarket.com/concepts/resolution)
+  also makes clear that a market probability is tied to a precisely defined
+  outcome and resolution process. QIS therefore displays the event question,
+  price, spread, liquidity, and resolution time together instead of treating a
+  probability as a context-free asset forecast.
 
 ## Decisions applied
 
@@ -49,6 +56,11 @@ that QIS should copy or embed another trading engine.
    idempotent across live-price refreshes. Failed validation is presented as
    "no validated direction" with a realized-volatility envelope; shrunken audit
    values remain stored for evaluation but are not promoted as point forecasts.
+7. Polymarket is a public, read-only event evidence layer. Only markets inside
+   the 14-day forecast boundary that pass order-book, spread, volume, liquidity,
+   and non-terminal-probability gates are displayed. Hourly snapshots are kept
+   for future shadow validation; event probabilities cannot modify forecast
+   values, scores, strategy gates, or execution.
 
 ## Next engineering priorities
 
@@ -62,3 +74,6 @@ that QIS should copy or embed another trading engine.
    REST reconciliation and gap repair.
 5. Measure research/live parity by recording the exact data revision, model
    version, interval, and feature timestamp used for every displayed decision.
+6. After enough event snapshots mature, measure whether probability changes add
+   incremental out-of-sample information beyond price, volatility, and macro
+   baselines before considering any model feature experiment.

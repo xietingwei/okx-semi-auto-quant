@@ -42,6 +42,13 @@ class Settings:
     spot_inst_ids: tuple[str, ...]
     spot_auto_discover: bool
     spot_max_assets: int
+    polymarket_enabled: bool
+    polymarket_timeout_seconds: int
+    polymarket_horizon_days: int
+    polymarket_max_events: int
+    polymarket_min_liquidity: float
+    polymarket_min_volume_24h: float
+    polymarket_max_spread: float
     bar: str
     loop_seconds: int
     initial_equity: float
@@ -129,6 +136,13 @@ def load_settings() -> Settings:
         ),
         spot_auto_discover=os.environ.get("QIS_SPOT_AUTO_DISCOVER", "1") == "1",
         spot_max_assets=_int("QIS_SPOT_MAX_ASSETS", 60),
+        polymarket_enabled=os.environ.get("QIS_POLYMARKET_ENABLED", "1") == "1",
+        polymarket_timeout_seconds=_int("QIS_POLYMARKET_TIMEOUT_SECONDS", 8),
+        polymarket_horizon_days=_int("QIS_POLYMARKET_HORIZON_DAYS", 14),
+        polymarket_max_events=_int("QIS_POLYMARKET_MAX_EVENTS", 5),
+        polymarket_min_liquidity=_float("QIS_POLYMARKET_MIN_LIQUIDITY", 25000),
+        polymarket_min_volume_24h=_float("QIS_POLYMARKET_MIN_VOLUME_24H", 10000),
+        polymarket_max_spread=_float("QIS_POLYMARKET_MAX_SPREAD", 0.05),
         bar=os.environ.get("QIS_BAR", "15m"),
         loop_seconds=_int("QIS_LOOP_SECONDS", 60),
         initial_equity=_float("QIS_INITIAL_EQUITY", 5000),

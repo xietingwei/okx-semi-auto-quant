@@ -124,6 +124,7 @@ class DeepAnalysisEngine:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "range_days": len(daily),
             "shadow_brain": forecast.get("shadow_brain") or {},
+            "polymarket": forecast.get("polymarket") or {},
             "quality_gate": {
                 "daily_coverage": len(daily),
                 "tested_hypotheses": len(tested),

@@ -3,7 +3,7 @@
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-98%20passing-2ea44f)](#testing)
+[![Tests](https://img.shields.io/badge/tests-106%20passing-2ea44f)](#testing)
 [![Mode](https://img.shields.io/badge/default-paper%20trading-cba45f)](#safety-boundaries)
 [![GitHub last commit](https://img.shields.io/github/last-commit/xietingwei/okx-semi-auto-quant)](https://github.com/xietingwei/okx-semi-auto-quant/commits/main)
 
@@ -55,6 +55,7 @@ QIS is designed around four principles:
 | Shadow Neural Brain | Runs a dependency-free neural learner in shadow mode, ranking assets by validated edge without overriding trade decisions |
 | Live-price forecasting | Recalculates features, probability, return, and target from the latest OKX ticker |
 | Market context | Uses order-book depth, funding, open interest, volume structure, macro data, and market breadth |
+| Polymarket event intelligence | Shows qualified 1–14 day event probabilities, 24-hour changes, spread, liquidity, and resolution time as read-only shadow evidence |
 | Position sentinel | Suggests dynamic stops, profit protection, reductions, and exit timing for manually registered positions |
 | Continuous evaluation | Measures direction accuracy, MAE, bias, Brier score, and interval coverage |
 | Decision copilot | Streams context-aware answers through any OpenAI-compatible chat-completions provider |
@@ -91,6 +92,13 @@ tiny shrunken return as if it were a useful point forecast.
 Chart ranges (**1D, 1M, 3M, 6M, 1Y, ALL**) describe historical coverage, not forecast horizons. Crypto charts request real OKX intervals such as 5m, 1H, 2H, 4H, 12H, and 1D and merge live plus paginated history. External equities are daily-only; the UI never relabels daily candles as hourly data.
 Until enough strategy-specific outcomes mature, they remain marked
 **simulation only** and cannot issue a production-ready entry recommendation.
+
+Polymarket is integrated as a separate **event evidence layer**. Only public,
+read-only markets resolving inside 14 days are considered. Events must have a
+usable order book, at least the configured liquidity and 24-hour volume, a
+bounded bid-ask spread, and a non-terminal probability. This data is displayed
+and snapshotted for shadow validation, but it does not alter a forecast, create
+an opportunity score, or trigger an order.
 
 ## Forecast Inputs
 
@@ -137,6 +145,9 @@ flowchart LR
     Factors --> Engine
     Engine --> Cal["Walk-forward calibration"]
     Cal --> API["Local HTTP API"]
+    PM["Polymarket public markets"] --> Evidence["Read-only event evidence"]
+    Evidence --> API
+    Evidence --> DB
     API --> UI["Opportunity Radar / Strategy Desk"]
     API --> Sentinel["Position Sentinel"]
     API --> Copilot["Decision Copilot"]
@@ -200,6 +211,20 @@ OKX_SIMULATED=1
 QIS_MODE=paper
 QIS_SPOT_AUTO_DISCOVER=1
 QIS_SPOT_MAX_ASSETS=60
+```
+
+### Polymarket event evidence
+
+No wallet or API key is required. The integration reads public market data and
+remains outside the forecast and execution paths.
+
+```ini
+QIS_POLYMARKET_ENABLED=1
+QIS_POLYMARKET_HORIZON_DAYS=14
+QIS_POLYMARKET_MAX_EVENTS=5
+QIS_POLYMARKET_MIN_LIQUIDITY=25000
+QIS_POLYMARKET_MIN_VOLUME_24H=10000
+QIS_POLYMARKET_MAX_SPREAD=0.05
 ```
 
 ### Risk Limits
@@ -361,8 +386,8 @@ git diff --check
 ```
 
 The current suite covers forecasting, strategy isolation, live-price rebasing,
-market factors, calibration, storage, position exits, API behavior, and the LLM
-context builder.
+market factors, calibration, Polymarket quality gates and asset mapping,
+storage, position exits, API behavior, and the LLM context builder.
 
 ## Contributing
 

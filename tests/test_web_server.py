@@ -98,6 +98,33 @@ def test_positions_route_returns_only_decision_payload(monkeypatch) -> None:
     assert payloads == [(200, {"positions": [], "analyses": []})]
 
 
+def test_polymarket_route_returns_cached_read_only_intelligence(monkeypatch) -> None:
+    handler = QisRequestHandler.__new__(QisRequestHandler)
+    handler.path = "/api/polymarket/events?inst_id=BTC-USDT"
+    payloads = []
+    intelligence = {
+        "status": "shadow_observation",
+        "affects_forecast": False,
+        "events": [{"market_id": "btc-july", "yes_probability": 0.565}],
+    }
+    monkeypatch.setattr(
+        QisRequestHandler,
+        "_forecasts",
+        lambda self: {"BTC-USDT": {"inst_id": "BTC-USDT", "polymarket": intelligence}},
+    )
+    monkeypatch.setattr(
+        QisRequestHandler,
+        "_json",
+        lambda self, payload, status=200: payloads.append((status, payload)),
+    )
+
+    QisRequestHandler.do_GET(handler)
+
+    assert payloads == [
+        (200, {"ok": True, "inst_id": "BTC-USDT", "intelligence": intelligence})
+    ]
+
+
 def test_deep_analysis_rank_route_returns_ranked_payload(monkeypatch) -> None:
     handler = QisRequestHandler.__new__(QisRequestHandler)
     handler.path = "/api/deep-analysis/rank?days=80"

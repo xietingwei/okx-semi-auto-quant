@@ -113,6 +113,33 @@ CREATE TABLE IF NOT EXISTS forecast_learning_runs (
     adjustments_json TEXT NOT NULL,
     advice_json TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS polymarket_event_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    captured_at TEXT NOT NULL,
+    market_id TEXT NOT NULL,
+    question TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    end_at TEXT NOT NULL,
+    relevance TEXT NOT NULL,
+    mapped_symbols_json TEXT NOT NULL,
+    yes_probability REAL,
+    probability_change_1h REAL,
+    probability_change_24h REAL,
+    best_bid REAL,
+    best_ask REAL,
+    spread REAL,
+    volume_24h REAL NOT NULL,
+    liquidity REAL NOT NULL,
+    quality_state TEXT NOT NULL,
+    eligible INTEGER NOT NULL,
+    market_url TEXT NOT NULL,
+    resolution_source TEXT NOT NULL,
+    UNIQUE(market_id, captured_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_polymarket_snapshots_market_time
+ON polymarket_event_snapshots (market_id, captured_at);
 """
 
 
@@ -901,6 +928,82 @@ class Storage:
             "direction_accuracy": row["direction_accuracy"],
             "adjustments": json.loads(row["adjustments_json"]),
             "advice": json.loads(row["advice_json"]),
+        }
+
+    def record_polymarket_snapshots(
+        self,
+        events: list[dict],
+        captured_at: datetime | None = None,
+    ) -> int:
+        """Record one observation per market per UTC hour for shadow validation."""
+        self.init()
+        observed = (captured_at or utc_now()).astimezone(timezone.utc).replace(
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        rows = []
+        for event in events:
+            market_id = str(event.get("market_id") or "")
+            if not market_id:
+                continue
+            rows.append(
+                (
+                    observed.isoformat(),
+                    market_id,
+                    str(event.get("question") or ""),
+                    str(event.get("slug") or ""),
+                    str(event.get("end_at") or ""),
+                    str(event.get("relevance") or ""),
+                    json.dumps(event.get("mapped_symbols") or [], ensure_ascii=False),
+                    event.get("yes_probability"),
+                    event.get("change_1h"),
+                    event.get("change_24h"),
+                    event.get("best_bid"),
+                    event.get("best_ask"),
+                    event.get("spread"),
+                    float(event.get("volume_24h") or 0),
+                    float(event.get("liquidity") or 0),
+                    str(event.get("quality_state") or "unknown"),
+                    int(bool(event.get("eligible"))),
+                    str(event.get("market_url") or ""),
+                    str(event.get("resolution_source") or ""),
+                )
+            )
+        if not rows:
+            return 0
+        with self._connect() as conn:
+            before = conn.total_changes
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO polymarket_event_snapshots
+                (captured_at, market_id, question, slug, end_at, relevance,
+                 mapped_symbols_json, yes_probability, probability_change_1h,
+                 probability_change_24h, best_bid, best_ask, spread, volume_24h,
+                 liquidity, quality_state, eligible, market_url, resolution_source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            return conn.total_changes - before
+
+    def polymarket_snapshot_stats(self) -> dict:
+        self.init()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS snapshots,
+                       COUNT(DISTINCT market_id) AS markets,
+                       COUNT(DISTINCT captured_at) AS capture_windows,
+                       MAX(captured_at) AS latest_at
+                FROM polymarket_event_snapshots
+                """
+            ).fetchone()
+        return {
+            "snapshots": int(row[0] or 0),
+            "markets": int(row[1] or 0),
+            "capture_windows": int(row[2] or 0),
+            "latest_at": row[3],
         }
 
     # Backwards-compatible alias for callers that still display trade-result statistics.
