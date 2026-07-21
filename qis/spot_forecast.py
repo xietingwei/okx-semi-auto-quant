@@ -1,36 +1,45 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 import math
 from statistics import mean, pstdev
 
 from qis.models import Candle
+from qis.short_term import assess_short_term_data, canonicalize_candles, short_term_context
 
 
-FORECAST_MODEL_VERSION = "global_regime_context_v7"
+FORECAST_MODEL_VERSION = "short_horizon_evidence_gate_v8"
 FORECAST_HISTORY_LIMIT = 200
+FORECAST_HORIZONS = (
+    ("1d", "1天", 1),
+    ("3d", "3天", 3),
+    ("1w", "7天", 7),
+    ("2w", "14天", 14),
+)
+FORECAST_LABELS = {key: label for key, label, _ in FORECAST_HORIZONS}
 
 STRATEGY_CATALOG = (
     {
         "id": "adaptive",
         "name": "综合自适应",
-        "focus": "全周期平衡",
-        "direction": "顺势为主，兼顾拥挤与大环境",
-        "best_for": "方向尚未完全统一、需要综合判断的行情",
+        "focus": "1–14天",
+        "direction": "以3天和7天为主，兼顾盘口、量能与大环境",
+        "best_for": "短线方向尚未完全统一、需要综合判断的行情",
         "risk": "极端事件下各类因子可能同时失效",
     },
     {
         "id": "trend",
         "name": "趋势跟随",
-        "focus": "1月–6月",
-        "direction": "沿30/90日主趋势持有",
-        "best_for": "单边趋势和回撤后续涨",
+        "focus": "3–14天",
+        "direction": "沿7/14/30日局部趋势跟随",
+        "best_for": "短线单边趋势和回撤后续涨",
         "risk": "震荡市容易反复止损",
     },
     {
         "id": "breakout",
         "name": "突破确认",
-        "focus": "1天–1月",
+        "focus": "1–7天",
         "direction": "跟随放量突破与盘口确认",
         "best_for": "动量启动、量价和持仓同步扩张",
         "risk": "假突破和流动性骤降",
@@ -38,7 +47,7 @@ STRATEGY_CATALOG = (
     {
         "id": "mean_reversion",
         "name": "均值回归",
-        "focus": "1天–1月",
+        "focus": "1–7天",
         "direction": "逆向交易过度偏离",
         "best_for": "震荡市、急涨急跌后的修复",
         "risk": "单边趋势中逆势抄底或摸顶",
@@ -79,19 +88,17 @@ class SpotForecast:
     decision: str
     buy_zone_low: float
     buy_zone_high: float
+    trigger_price: float
     invalidation: float
+    risk_reward: float
     factors: dict[str, str]
     market_context: dict
+    data_quality: dict
+    short_term_context: dict
 
 
 class SpotForecastEngine:
-    HORIZONS = (
-        ("1d", "1天", 1),
-        ("1w", "1周", 7),
-        ("1m", "1月", 30),
-        ("3m", "3月", 90),
-        ("6m", "6月", 180),
-    )
+    HORIZONS = FORECAST_HORIZONS
 
     def analyze(
         self,
@@ -102,9 +109,20 @@ class SpotForecastEngine:
         market_context: dict | None = None,
         strategy_id: str = "adaptive",
     ) -> SpotForecast | None:
+        raw_candles = list(candles)
+        candles = self._canonical_candles(raw_candles)
         closed = candles[:-1] if len(candles) > 1 else candles
         if len(closed) < 90:
             return None
+        raw_ordered = sorted(raw_candles, key=lambda item: item.ts)
+        raw_closed = raw_ordered[:-1] if len(raw_ordered) > 1 else raw_ordered
+        symbol = str(inst_id).split("-")[0].upper()
+        data_quality = assess_short_term_data(
+            raw_closed,
+            as_of=quote_time,
+            allow_weekends=symbol in {"AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA"},
+        )
+        short_context = short_term_context(data_quality)
         closes = [item.close for item in closed]
         log_returns = [
             math.log(current / previous)
@@ -119,12 +137,16 @@ class SpotForecastEngine:
         # trend and momentum to the previous UTC close.
         feature_closes = [*closes, current] if live_price is not None and live_price > 0 else closes
         volatility = pstdev(log_returns[-60:]) if len(log_returns) >= 2 else 0.0
-        trend_30 = self._annualized_slope(feature_closes[-30:])
-        trend_90 = self._annualized_slope(feature_closes[-90:])
+        trend_7 = self._daily_slope(feature_closes[-7:])
+        trend_14 = self._daily_slope(feature_closes[-14:])
+        trend_30 = self._daily_slope(feature_closes[-30:])
+        momentum_1 = current / feature_closes[-2] - 1
+        momentum_3 = current / feature_closes[-4] - 1
         momentum_7 = current / feature_closes[-8] - 1
+        momentum_14 = current / feature_closes[-15] - 1
         momentum_30 = current / feature_closes[-31] - 1
-        momentum_90 = current / feature_closes[-91] - 1
-        regime = self._regime(trend_30, trend_90, volatility)
+        stretch_20 = current / mean(feature_closes[-20:]) - 1
+        regime = self._regime(trend_7, trend_30, volatility)
         forecasts = [
             self._forecast(
                 key,
@@ -132,21 +154,32 @@ class SpotForecastEngine:
                 days,
                 current,
                 volatility,
+                trend_7,
+                trend_14,
                 trend_30,
-                trend_90,
+                momentum_1,
+                momentum_3,
                 momentum_7,
+                momentum_14,
                 momentum_30,
-                momentum_90,
+                stretch_20,
                 market_context or {},
                 strategy_id,
             )
             for key, label, days in self.HORIZONS
         ]
         atr = self._atr(closed[-15:])
-        buy_zone_low = current - atr * 0.75
-        buy_zone_high = current + atr * 0.15
-        invalidation = current - atr * 1.8
+        recent_support = min(item.low for item in closed[-7:])
+        recent_resistance = max(item.high for item in closed[-4:-1])
+        buy_zone_low = max(recent_support, current - atr * 0.65)
+        buy_zone_high = current + atr * 0.10
+        trigger_price = max(current + atr * 0.10, recent_resistance)
+        invalidation = min(recent_support - atr * 0.15, current - atr * 1.25)
         opportunity_score = score_opportunity(forecasts, volatility)
+        # A gap-riddled or stale history may still produce mathematical
+        # outputs, but it must never look like a trade-ready short-term edge.
+        if not data_quality["actionable"]:
+            opportunity_score = min(opportunity_score, 39)
         rebound_score, rebound_factors = self._rebound_profile(
             feature_closes,
             forecasts,
@@ -160,6 +193,9 @@ class SpotForecastEngine:
         )
         decision = refine_rebound_decision(decision, forecasts, rebound_score)
         positive = sum(1 for item in forecasts if item.expected_return > 0)
+        week = next(item for item in forecasts if item.key == "1w")
+        downside = max(current - invalidation, current * 0.005)
+        risk_reward = max(0.0, week.target - current) / downside
         history = [
             {
                 "date": item.ts.isoformat(),
@@ -172,10 +208,10 @@ class SpotForecastEngine:
             for item in closed[-FORECAST_HISTORY_LIMIT:]
         ]
         factors = {
-            "trend": self._strength_label((trend_30 + trend_90) / 2),
-            "momentum": self._strength_label((momentum_7 + momentum_30) / 2),
+            "trend": self._strength_label((trend_7 + trend_14 + trend_30) / 3 * 365),
+            "momentum": self._strength_label((momentum_3 + momentum_7 + momentum_14) / 3),
             "volatility": "高" if volatility > 0.045 else "中" if volatility > 0.025 else "低",
-            "agreement": f"{positive}/5 周期偏多",
+            "agreement": f"{positive}/4 短周期偏多",
             "orderbook": self._factor_label((market_context or {}).get("orderbook_score", 0.0)),
             "funding": self._factor_label((market_context or {}).get("funding_score", 0.0)),
             "open_interest": self._factor_label((market_context or {}).get("open_interest_score", 0.0)),
@@ -206,9 +242,13 @@ class SpotForecastEngine:
             decision=decision,
             buy_zone_low=buy_zone_low,
             buy_zone_high=buy_zone_high,
+            trigger_price=trigger_price,
             invalidation=invalidation,
+            risk_reward=risk_reward,
             factors=factors,
             market_context=market_context or {},
+            data_quality=data_quality,
+            short_term_context=short_context,
         )
 
     def analyze_suite(
@@ -260,44 +300,46 @@ class SpotForecastEngine:
         days: int,
         current: float,
         volatility: float,
+        trend_7: float,
+        trend_14: float,
         trend_30: float,
-        trend_90: float,
+        momentum_1: float,
+        momentum_3: float,
         momentum_7: float,
+        momentum_14: float,
         momentum_30: float,
-        momentum_90: float,
+        stretch_20: float,
         market_context: dict,
         strategy_id: str,
     ) -> HorizonForecast:
-        horizon_years = days / 365
-        short_weight = max(0.15, 1 - days / 210)
-        annual_trend = trend_30 * short_weight + trend_90 * (1 - short_weight)
-        momentum = self._momentum_blend(days, momentum_7, momentum_30, momentum_90)
-        trend_return = math.exp(
-            self._clip(annual_trend * horizon_years, -0.55, 0.75)
-        ) - 1
-        mean_reversion_penalty = -0.18 * momentum if abs(momentum) > volatility * math.sqrt(max(days, 1)) * 1.8 else 0.0
+        trend_rate = trend_7 * 0.45 + trend_14 * 0.35 + trend_30 * 0.20
+        momentum_rate = self._momentum_rate(
+            days,
+            momentum_1,
+            momentum_3,
+            momentum_7,
+            momentum_14,
+            momentum_30,
+        )
         trend_weight, momentum_weight = self._strategy_weights(strategy_id, days)
-        if annual_trend * momentum < 0:
-            # Historical evaluation shows weak 1w/1m direction. When trend and
-            # momentum disagree, do not let short-lived momentum dictate targets.
-            momentum_weight *= 0.45
+        if trend_rate * momentum_rate < 0:
+            # Conflicting short-term evidence must reduce conviction rather than
+            # letting the fastest feature dictate the full target.
+            momentum_weight *= 0.50
             trend_weight = 1 - momentum_weight
+        daily_edge = trend_rate * trend_weight + momentum_rate * momentum_weight
+        directional_return = math.exp(
+            self._clip(daily_edge * days, -0.35, 0.35)
+        ) - 1
+        stretch_sigma = max(volatility * math.sqrt(20), 0.015)
+        overextension = self._clip(stretch_20 / stretch_sigma, -2.5, 2.5)
         if strategy_id == "mean_reversion":
-            reversion_strength = min(
-                0.72,
-                0.28 + abs(momentum) / max(volatility * math.sqrt(max(days, 1)), 0.01) * 0.08,
-            )
-            horizon_decay = 1.0 if days <= 30 else 0.45
-            base_expected_return = (
-                trend_return * 0.24
-                - momentum * reversion_strength * horizon_decay
-            )
+            base_expected_return = directional_return * 0.20 - overextension * volatility * math.sqrt(days) * 0.42
         else:
-            base_expected_return = (
-                trend_return * trend_weight
-                + momentum * momentum_weight
-                + mean_reversion_penalty
+            reversion_penalty = overextension * volatility * math.sqrt(days) * (
+                0.12 if strategy_id == "trend" else 0.22
             )
+            base_expected_return = directional_return - reversion_penalty
         factor_score, factor_delta = self._factor_adjustment(days, market_context)
         factor_multiplier = {
             "adaptive": 1.0,
@@ -306,15 +348,17 @@ class SpotForecastEngine:
             "mean_reversion": 0.35,
         }.get(strategy_id, 1.0)
         raw_expected_return = base_expected_return + factor_delta * factor_multiplier
-        positive_limit = 0.38 if strategy_id == "mean_reversion" else 0.45
-        negative_limit = 0.30 if strategy_id == "mean_reversion" else 0.35
+        natural_range = max(volatility * math.sqrt(days) * 1.9, 0.008 * math.sqrt(days))
+        hard_limit = {1: 0.08, 3: 0.14, 7: 0.22, 14: 0.30}[days]
+        positive_limit = min(hard_limit, natural_range)
+        negative_limit = min(hard_limit * 0.90, natural_range)
         expected_return = self._soft_bound(
             raw_expected_return,
             negative_limit,
             positive_limit,
         )
         sigma = volatility * math.sqrt(days)
-        agreement = self._agreement(annual_trend, momentum)
+        agreement = self._agreement(trend_rate, momentum_rate)
         signal_to_noise = abs(expected_return) / max(sigma, 0.01)
         factor_alignment = (
             1.0
@@ -327,26 +371,34 @@ class SpotForecastEngine:
             0.08,
             max(0.0, float(market_context.get("spread_bps", 0.0)) - 3.0) / 250,
         )
-        confidence = self._clip(
-            0.38
-            + agreement * 0.18
-            + min(signal_to_noise, 2) * 0.13
-            + factor_alignment * min(abs(factor_score), 1.0) * 0.06
-            - spread_penalty,
-            0.32,
-            0.82,
+        available = market_context.get("available", {})
+        evidence_ratio = (
+            sum(1 for value in available.values() if value) / len(available)
+            if available
+            else 0.0
         )
-        if strategy_id == "mean_reversion" and days > 30:
-            confidence = max(0.32, confidence - 0.12)
+        confidence = self._clip(
+            0.32
+            + agreement * 0.14
+            + min(signal_to_noise, 1.8) * 0.10
+            + evidence_ratio * 0.08
+            + factor_alignment * min(abs(factor_score), 1.0) * 0.05
+            - spread_penalty,
+            0.28,
+            0.74,
+        )
         z_score = expected_return / max(sigma, 0.01)
-        up_probability = self._clip(1 / (1 + math.exp(-z_score * 1.15)), 0.12, 0.88)
+        up_probability = self._clip(1 / (1 + math.exp(-z_score)), 0.15, 0.85)
         target = current * (1 + expected_return)
-        interval = current * sigma * (1.15 + (1 - confidence) * 0.8)
+        interval = current * max(sigma, 0.006 * math.sqrt(days)) * (
+            1.20 + (1 - confidence) * 0.85
+        )
         low = max(0.0, target - interval)
         high = target + interval
-        if expected_return > 0.025 and up_probability >= 0.58:
+        signal_floor = {1: 0.006, 3: 0.012, 7: 0.020, 14: 0.030}[days]
+        if expected_return > signal_floor and up_probability >= 0.55:
             signal = "偏多"
-        elif expected_return < -0.025 and up_probability <= 0.42:
+        elif expected_return < -signal_floor and up_probability <= 0.45:
             signal = "偏空"
         else:
             signal = "震荡"
@@ -364,7 +416,12 @@ class SpotForecastEngine:
         )
 
     @staticmethod
-    def _annualized_slope(values: list[float]) -> float:
+    def _canonical_candles(candles: list[Candle]) -> list[Candle]:
+        """Sort candles and discard duplicate/invalid timestamps before features."""
+        return canonicalize_candles(candles)
+
+    @staticmethod
+    def _daily_slope(values: list[float]) -> float:
         logs = [math.log(value) for value in values if value > 0]
         if len(logs) < 2:
             return 0.0
@@ -374,35 +431,50 @@ class SpotForecastEngine:
         if denominator == 0:
             return 0.0
         slope = sum((index - x_mean) * (value - y_mean) for index, value in enumerate(logs)) / denominator
-        return slope * 365
+        return slope
 
     @staticmethod
-    def _momentum_blend(days: int, momentum_7: float, momentum_30: float, momentum_90: float) -> float:
-        if days <= 7:
-            return momentum_7 * 0.65 + momentum_30 * 0.25 + momentum_90 * 0.10
-        if days <= 30:
-            return momentum_7 * 0.25 + momentum_30 * 0.55 + momentum_90 * 0.20
-        if days <= 90:
-            return momentum_7 * 0.10 + momentum_30 * 0.35 + momentum_90 * 0.55
-        # Long-horizon momentum is a regime feature, not a return multiplier.
-        return momentum_30 * 0.20 + momentum_90 * 0.80
+    def _momentum_rate(
+        days: int,
+        momentum_1: float,
+        momentum_3: float,
+        momentum_7: float,
+        momentum_14: float,
+        momentum_30: float,
+    ) -> float:
+        rates = (
+            math.log1p(max(momentum_1, -0.95)),
+            math.log1p(max(momentum_3, -0.95)) / 3,
+            math.log1p(max(momentum_7, -0.95)) / 7,
+            math.log1p(max(momentum_14, -0.95)) / 14,
+            math.log1p(max(momentum_30, -0.95)) / 30,
+        )
+        if days <= 1:
+            weights = (0.42, 0.28, 0.18, 0.08, 0.04)
+        elif days <= 3:
+            weights = (0.18, 0.34, 0.28, 0.14, 0.06)
+        elif days <= 7:
+            weights = (0.08, 0.22, 0.34, 0.25, 0.11)
+        else:
+            weights = (0.04, 0.12, 0.25, 0.38, 0.21)
+        return sum(weight * rate for weight, rate in zip(weights, rates))
 
     @staticmethod
     def _horizon_weights(days: int) -> tuple[float, float]:
+        if days <= 1:
+            return 0.35, 0.65
+        if days <= 3:
+            return 0.45, 0.55
         if days <= 7:
-            return 0.72, 0.28
-        if days <= 30:
-            return 0.70, 0.30
-        if days <= 90:
-            return 0.66, 0.34
-        return 0.72, 0.28
+            return 0.58, 0.42
+        return 0.68, 0.32
 
     @staticmethod
     def _strategy_weights(strategy_id: str, days: int) -> tuple[float, float]:
         if strategy_id == "trend":
-            return (0.88, 0.12) if days >= 30 else (0.80, 0.20)
+            return (0.84, 0.16) if days >= 7 else (0.72, 0.28)
         if strategy_id == "breakout":
-            return (0.42, 0.58) if days <= 30 else (0.58, 0.42)
+            return (0.30, 0.70) if days <= 3 else (0.46, 0.54)
         return SpotForecastEngine._horizon_weights(days)
 
     @staticmethod
@@ -413,18 +485,18 @@ class SpotForecastEngine:
 
     @staticmethod
     def _factor_adjustment(days: int, context: dict) -> tuple[float, float]:
-        if days <= 7:
-            weights = (0.30, 0.12, 0.08, 0.18, 0.08, 0.24)
-            max_delta = 0.035
-        elif days <= 30:
-            weights = (0.12, 0.15, 0.15, 0.18, 0.15, 0.25)
-            max_delta = 0.050
-        elif days <= 90:
-            weights = (0.04, 0.14, 0.20, 0.17, 0.18, 0.27)
-            max_delta = 0.060
+        if days <= 1:
+            weights = (0.38, 0.10, 0.06, 0.22, 0.05, 0.19)
+            max_delta = 0.008
+        elif days <= 3:
+            weights = (0.30, 0.11, 0.10, 0.22, 0.07, 0.20)
+            max_delta = 0.015
+        elif days <= 7:
+            weights = (0.20, 0.13, 0.13, 0.21, 0.11, 0.22)
+            max_delta = 0.025
         else:
-            weights = (0.02, 0.12, 0.20, 0.12, 0.24, 0.30)
-            max_delta = 0.055
+            weights = (0.10, 0.13, 0.17, 0.18, 0.17, 0.25)
+            max_delta = 0.035
         values = (
             float(context.get("orderbook_score", 0.0)),
             float(context.get("funding_score", 0.0)),
@@ -455,11 +527,11 @@ class SpotForecastEngine:
         ma_discount = max(0.0, ma20 / current - 1)
         distance_from_low = current / low_30 - 1 if low_30 > 0 else 0.0
         by_key = {item.key: item for item in forecasts}
-        month = by_key.get("1m")
-        quarter = by_key.get("3m")
-        month_return = month.expected_return if month else 0.0
-        quarter_return = quarter.expected_return if quarter else 0.0
-        month_probability = month.up_probability if month else 0.5
+        short = by_key.get("3d")
+        week = by_key.get("1w")
+        short_return = short.expected_return if short else 0.0
+        week_return = week.expected_return if week else 0.0
+        short_probability = short.up_probability if short else 0.5
         volume_score = max(-1.0, min(1.0, float(market_context.get("volume_score", 0.0))))
         environment_score = max(
             -1.0,
@@ -474,18 +546,18 @@ class SpotForecastEngine:
             + min(max(momentum_7, 0.0) / 0.04, 1.0) * 12
         )
         forecast_quality = (
-            cls._clip((month_return + 0.08) / 0.18, 0.0, 1.0) * 10
-            + cls._clip((month_probability - 0.38) / 0.30, 0.0, 1.0) * 6
-            + cls._clip((quarter_return + 0.10) / 0.24, 0.0, 1.0) * 6
+            cls._clip((short_return + 0.03) / 0.08, 0.0, 1.0) * 11
+            + cls._clip((short_probability - 0.40) / 0.24, 0.0, 1.0) * 7
+            + cls._clip((week_return + 0.05) / 0.12, 0.0, 1.0) * 5
         )
         context_quality = 12 + volume_score * 7 + environment_score * 6
         breakdown_penalty = 0.0
         if distance_from_low < 0.018:
             breakdown_penalty += 22
-        if month_return < 0:
-            breakdown_penalty += min(20.0, abs(month_return) / 0.15 * 20)
-        if quarter_return < -0.12:
-            breakdown_penalty += min(10.0, abs(quarter_return + 0.12) / 0.18 * 10)
+        if short_return < 0:
+            breakdown_penalty += min(20.0, abs(short_return) / 0.06 * 20)
+        if week_return < -0.06:
+            breakdown_penalty += min(10.0, abs(week_return + 0.06) / 0.10 * 10)
         breakdown_penalty += min(10.0, max(0.0, volatility - 0.045) * 180)
         raw_score = (
             pullback_quality
@@ -495,7 +567,7 @@ class SpotForecastEngine:
             - breakdown_penalty
         )
         score = round(cls._clip(raw_score, 0.0, 100.0))
-        breakdown_risk = distance_from_low < 0.018 or month_return < 0
+        breakdown_risk = distance_from_low < 0.018 or short_return < 0
         if score >= 65:
             rebound_label = "强反弹候选"
         elif score >= 50:
@@ -522,14 +594,14 @@ class SpotForecastEngine:
         return 1.0 if trend * momentum > 0 else 0.0
 
     @staticmethod
-    def _regime(trend_30: float, trend_90: float, volatility: float) -> str:
+    def _regime(trend_7: float, trend_30: float, volatility: float) -> str:
         if volatility > 0.055:
             return "高波动"
-        if trend_30 > 0.08 and trend_90 > 0.05:
-            return "上升趋势"
-        if trend_30 < -0.08 and trend_90 < -0.05:
-            return "下降趋势"
-        return "区间震荡"
+        if trend_7 > 0.0008 and trend_30 > 0.0004:
+            return "短线上升"
+        if trend_7 < -0.0008 and trend_30 < -0.0004:
+            return "短线下降"
+        return "短线震荡"
 
     @staticmethod
     def _strength_label(value: float) -> str:
@@ -570,35 +642,43 @@ def score_opportunity(forecasts: list[HorizonForecast] | list[dict], volatility:
         str(_value(item, "key")): item
         for item in forecasts
     }
-    rows = [by_key.get(key) for key in ("1w", "1m", "3m")]
+    keys = ("1d", "3d", "1w", "2w")
+    weights = (0.12, 0.38, 0.35, 0.15)
+    rows = [by_key.get(key) for key in keys]
     if any(item is None for item in rows):
         return 0
-    week, month, quarter = rows
-    probability = (
-        float(_value(week, "up_probability")) * 0.25
-        + float(_value(month, "up_probability")) * 0.45
-        + float(_value(quarter, "up_probability")) * 0.30
+    probability = sum(
+        float(_value(item, "up_probability")) * weight
+        for item, weight in zip(rows, weights)
     )
-    expected_return = (
-        float(_value(week, "expected_return")) * 0.20
-        + float(_value(month, "expected_return")) * 0.45
-        + float(_value(quarter, "expected_return")) * 0.35
+    confidence = sum(
+        float(_value(item, "confidence")) * weight
+        for item, weight in zip(rows, weights)
     )
-    confidence = (
-        float(_value(week, "confidence")) * 0.25
-        + float(_value(month, "confidence")) * 0.45
-        + float(_value(quarter, "confidence")) * 0.30
+    risk_adjusted_returns = [
+        float(_value(item, "expected_return"))
+        / max(volatility * math.sqrt(float(_value(item, "days") or days)), 0.01)
+        for item, days in zip(rows, (1, 3, 7, 14))
+    ]
+    return_quality = sum(
+        self_weight * (0.5 + 0.5 * math.tanh(value))
+        for self_weight, value in zip(weights, risk_adjusted_returns)
     )
     agreement = sum(
         1 for item in rows if float(_value(item, "expected_return")) > 0
-    ) / 3
-    return_quality = max(0.0, min(1.0, (expected_return + 0.02) / 0.18))
-    volatility_penalty = min(12.0, max(0.0, volatility) * 120)
+    ) / len(rows)
+    core_agreement = (
+        float(_value(by_key["3d"], "expected_return"))
+        * float(_value(by_key["1w"], "expected_return"))
+        > 0
+    )
+    volatility_penalty = min(10.0, max(0.0, volatility - 0.025) * 170)
     score = (
-        probability * 0.38
-        + return_quality * 0.27
-        + confidence * 0.20
-        + agreement * 0.15
+        probability * 0.32
+        + return_quality * 0.26
+        + confidence * 0.22
+        + agreement * 0.12
+        + (0.08 if core_agreement else 0.0)
     ) * 100 - volatility_penalty
     return round(max(0.0, min(100.0, score)))
 
@@ -609,34 +689,38 @@ def decide_strategy(
     market_environment_score: float,
 ) -> str:
     by_key = {str(_value(item, "key")): item for item in forecasts}
-    rows = [by_key.get(key) for key in ("1w", "1m", "3m")]
+    rows = [by_key.get(key) for key in ("1d", "3d", "1w", "2w")]
     if any(item is None for item in rows):
         return "数据不足"
     positive = sum(
         1 for item in rows if float(_value(item, "expected_return")) > 0
     )
-    month = by_key["1m"]
+    short = by_key["3d"]
+    week = by_key["1w"]
     weighted_confidence = sum(
         float(_value(item, "confidence")) * weight
-        for item, weight in zip(rows, (0.25, 0.45, 0.30))
+        for item, weight in zip(rows, (0.12, 0.38, 0.35, 0.15))
     )
     buy_ready = (
-        score >= 70
-        and positive == 3
-        and float(_value(month, "up_probability")) >= 0.60
-        and weighted_confidence >= 0.55
+        score >= 72
+        and positive >= 3
+        and float(_value(short, "expected_return")) > 0
+        and float(_value(week, "expected_return")) > 0
+        and float(_value(short, "up_probability")) >= 0.57
+        and float(_value(week, "up_probability")) >= 0.55
+        and weighted_confidence >= 0.48
     )
     if buy_ready:
         return (
-            "逆势等待确认"
+            "风险收缩，等待确认"
             if market_environment_score <= -0.35
-            else "分批关注买入"
+            else "短线条件成立"
         )
-    if score >= 60 and positive >= 2:
-        return "观察等待触发"
+    if score >= 60 and positive >= 3:
+        return "等待短线触发"
     if score < 45 or positive <= 1:
-        return "等待趋势企稳"
-    return "中性观察"
+        return "短线回避"
+    return "方向冲突，观望"
 
 
 def refine_rebound_decision(
@@ -645,18 +729,18 @@ def refine_rebound_decision(
     rebound_score: int,
 ) -> str:
     by_key = {str(_value(item, "key")): item for item in forecasts}
-    month = by_key.get("1m")
-    month_return = float(_value(month, "expected_return")) if month else 0.0
-    month_probability = float(_value(month, "up_probability")) if month else 0.5
-    if rebound_score <= 35 and (month_return < 0 or month_probability <= 0.42):
-        return "破位风险，暂不抄底"
+    short = by_key.get("3d")
+    short_return = float(_value(short, "expected_return")) if short else 0.0
+    short_probability = float(_value(short, "up_probability")) if short else 0.5
+    if rebound_score <= 35 and (short_return < 0 or short_probability <= 0.43):
+        return "破位风险，短线回避"
     if (
         rebound_score >= 65
-        and month_return > 0
-        and month_probability >= 0.54
+        and short_return > 0
+        and short_probability >= 0.54
     ):
-        return "跌后反弹候选"
-    if rebound_score >= 55 and decision in {"等待趋势企稳", "中性观察"}:
+        return "超跌修复候选"
+    if rebound_score >= 55 and decision in {"短线回避", "方向冲突，观望"}:
         return "等待企稳确认"
     return decision
 

@@ -27,6 +27,7 @@ from qis.runner import Runner
 from qis.storage import Storage
 from qis.spot_dashboard import render_spot_dashboard
 from qis.spot_forecast import SpotForecastEngine
+from qis.short_term import canonicalize_candles
 from qis.ml_shadow import attach_shadow_brain
 from qis.strategy import DonchianBreakoutStrategy
 from qis.us_stocks import YahooFinanceClient, UsStockError, UsStockHistory
@@ -285,11 +286,18 @@ def _backfill_forecast_history(
     inst_id: str,
     candles: list,
 ) -> None:
-    closed = candles[:-1] if len(candles) > 1 else candles
+    ordered = canonicalize_candles(candles)
+    closed = ordered[:-1] if len(ordered) > 1 else ordered
     horizon_days = dict((key, days) for key, _, days in engine.HORIZONS)
-    start = max(90, len(closed) - 210)
-    for origin in range(start, len(closed) - 1, 14):
-        historical = engine.analyze(inst_id, candles[: origin + 2])
+    # Short-horizon models need several distinct walk-forward dates. Four-day
+    # spacing supplies dense 1/3/7/14-day outcomes without treating hourly
+    # snapshots as independent evidence.
+    start = max(90, len(closed) - 240)
+    # Keep only origins with a complete 14-day outcome for every short-term
+    # horizon. Partial tails would over-represent 1d/3d samples in calibration.
+    end = len(closed) - max(horizon_days.values())
+    for origin in range(start, max(start, end), 4):
+        historical = engine.analyze(inst_id, ordered[: origin + 2])
         if historical is None:
             continue
         actual_prices = {
