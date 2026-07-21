@@ -192,6 +192,8 @@ class SpotForecastEngine:
             float((market_context or {}).get("market_environment_score", 0.0)),
         )
         decision = refine_rebound_decision(decision, forecasts, rebound_score)
+        if not data_quality["actionable"]:
+            decision = "历史数据质量不足，观望"
         positive = sum(1 for item in forecasts if item.expected_return > 0)
         week = next(item for item in forecasts if item.key == "1w")
         downside = max(current - invalidation, current * 0.005)

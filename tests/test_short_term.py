@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from qis.models import Candle
+from qis.forecast_learning import apply_strategy_adjustments
 from qis.short_term import assess_short_term_data, short_term_context
 from qis.spot_forecast import SpotForecastEngine
 from qis.__main__ import _backfill_forecast_history
@@ -67,6 +68,17 @@ def test_forecast_canonicalises_duplicate_rows_and_exposes_quality() -> None:
     assert forecast.short_term_context["actionable"] is True
 
 
+def test_bad_history_cannot_issue_rebound_decision() -> None:
+    rows = _candles(110)
+    rows = rows[:55] + rows[57:]
+
+    forecast = SpotForecastEngine().analyze("BTC-USDT", rows)
+
+    assert forecast is not None
+    assert forecast.data_quality["actionable"] is False
+    assert forecast.decision == "历史数据质量不足，观望"
+
+
 def test_backfill_uses_canonical_history_and_complete_short_horizons() -> None:
     rows = _candles(125)
     rows = [rows[-1], *rows, rows[14]]
@@ -87,3 +99,31 @@ def test_backfill_uses_canonical_history_and_complete_short_horizons() -> None:
         for _, _, actual_prices in storage.calls
     )
     assert [call[1] for call in storage.calls] == sorted(call[1] for call in storage.calls)
+
+
+def test_calibration_cannot_restore_signal_from_bad_history() -> None:
+    forecast = {
+        "current_price": 100.0,
+        "volatility": 0.02,
+        "market_context": {},
+        "data_quality": {"actionable": False, "warnings": ["检测到历史缺口"]},
+        "forecasts": [
+            {
+                "key": key,
+                "days": days,
+                "target": 110.0,
+                "low": 90.0,
+                "high": 120.0,
+                "expected_return": 0.08,
+                "up_probability": 0.70,
+                "confidence": 0.65,
+                "signal": "偏多",
+            }
+            for key, days in (("1d", 1), ("3d", 3), ("1w", 7), ("2w", 14))
+        ],
+    }
+
+    result = apply_strategy_adjustments(forecast, {})
+
+    assert result["opportunity_score"] <= 39
+    assert result["decision"] == "历史数据质量不足，观望"
