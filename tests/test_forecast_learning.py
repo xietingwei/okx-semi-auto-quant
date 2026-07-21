@@ -69,6 +69,42 @@ def test_strategy_learning_can_strongly_neutralize_unreliable_horizon() -> None:
     assert item["signal"] == "偏多"
 
 
+def test_reapplying_calibration_does_not_shrink_forecast_twice() -> None:
+    forecast = {
+        "current_price": 100.0,
+        "forecasts": [{
+            "key": "1w",
+            "target": 110.0,
+            "low": 90.0,
+            "high": 120.0,
+            "expected_return": 0.10,
+            "up_probability": 0.70,
+            "signal": "偏多",
+        }],
+    }
+    adjustments = {
+        "1w": {
+            "active": True,
+            "samples": 100,
+            "return_shift": 0.0,
+            "return_scale": 0.20,
+            "probability_shift": 0.0,
+            "probability_scale": 0.20,
+            "interval_scale": 1.10,
+        }
+    }
+
+    first = apply_strategy_adjustments(forecast, adjustments)
+    second = apply_strategy_adjustments(first, adjustments)
+
+    assert first["forecasts"][0]["expected_return"] == pytest.approx(0.02)
+    assert second["forecasts"][0]["expected_return"] == pytest.approx(0.02)
+    assert second["forecasts"][0]["up_probability"] == pytest.approx(0.54)
+    assert second["forecasts"][0]["target"] == pytest.approx(
+        first["forecasts"][0]["target"]
+    )
+
+
 def test_market_wide_calibration_cannot_reverse_asset_direction() -> None:
     forecast = {
         "current_price": 100.0,
@@ -181,8 +217,82 @@ def test_data_quality_gate_overrides_strategy_cold_start_label() -> None:
         ],
     }
 
-    result = apply_strategy_adjustments(variant, {})
+    adjustments = {
+        key: {
+            "active": True,
+            "samples": 80,
+            "test_windows": 20,
+            "return_shift": 0.0,
+            "return_scale": 2.0,
+            "probability_shift": 0.0,
+            "probability_scale": 1.0,
+            "interval_scale": 1.0,
+            "direction_accuracy": 0.65,
+            "baseline_accuracy": 0.50,
+            "edge": 0.15,
+        }
+        for key in ("1d", "3d", "1w", "2w")
+    }
+
+    result = apply_strategy_adjustments(variant, adjustments)
 
     assert result["decision"] == "历史数据质量不足，观望"
     assert result["strategy_validation"] == "数据质量未通过"
     assert result["opportunity_score"] <= 39
+    assert result["reference"]["grade"] == "D"
+    assert result["reference"]["actionable"] is False
+    assert result["forecast_display"]["mode"] == "volatility_envelope"
+    assert result["forecast_display"]["direction_available"] is False
+
+
+def test_small_calibrated_moves_are_presented_as_volatility_not_direction() -> None:
+    variant = {
+        "current_price": 100.0,
+        "volatility": 0.02,
+        "market_context": {},
+        "forecasts": [
+            {
+                "key": key,
+                "days": days,
+                "target": 100.0 * (1 + expected_return),
+                "low": 94.0,
+                "high": 106.0,
+                "expected_return": expected_return,
+                "up_probability": 0.65,
+                "confidence": 0.60,
+                "signal": "偏多",
+            }
+            for key, days, expected_return in (
+                ("1d", 1, 0.004),
+                ("3d", 3, 0.008),
+                ("1w", 7, 0.015),
+                ("2w", 14, 0.020),
+            )
+        ],
+    }
+    adjustments = {
+        key: {
+            "active": True,
+            "samples": 80,
+            "test_windows": 20,
+            "return_shift": 0.0,
+            "return_scale": 1.0,
+            "probability_shift": 0.0,
+            "probability_scale": 1.0,
+            "interval_scale": 1.0,
+            "direction_accuracy": 0.62,
+            "baseline_accuracy": 0.52,
+            "edge": 0.10,
+        }
+        for key in ("1d", "3d", "1w", "2w")
+    }
+
+    result = apply_strategy_adjustments(variant, adjustments)
+    display = result["forecast_display"]
+    three_day = next(item for item in display["envelopes"] if item["key"] == "3d")
+
+    assert result["reference"]["actionable"] is False
+    assert "噪声阈值" in result["reference"]["reason"]
+    assert display["mode"] == "volatility_envelope"
+    assert three_day["low"] < 100.0 < three_day["high"]
+    assert three_day["expected_move"] == pytest.approx(0.0353, abs=0.0002)

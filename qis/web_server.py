@@ -19,7 +19,7 @@ from qis.models import Candle
 from qis.okx import OkxClient, OkxError
 from qis.position_risk import analyze_position
 from qis.spot_dashboard import render_spot_dashboard_cache
-from qis.spot_forecast import SpotForecastEngine
+from qis.spot_forecast import FORECAST_MODEL_VERSION, SpotForecastEngine
 from qis.storage import Storage
 
 
@@ -420,7 +420,7 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
                 if inst_id in inst_ids
             }
         quotes = self.quote_service.quotes()
-        adjustment_cache: dict[str, dict[str, dict]] = {}
+        adjustment_cache: dict[tuple[str, str], dict[str, dict]] = {}
         result = {}
         for inst_id, forecast in forecasts.items():
             rebased = (
@@ -434,15 +434,16 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
     def _apply_cached_adjustments(
         self,
         forecast: dict,
-        cache: dict[str, dict[str, dict]],
+        cache: dict[tuple[str, str], dict[str, dict]],
     ) -> dict:
+        inst_id = str(forecast.get("inst_id") or "")
+
         def adjustments_for(model_version: str) -> dict[str, dict]:
-            key = model_version or "__default__"
+            key = (inst_id, model_version or "__default__")
             if key not in cache:
-                cache[key] = (
-                    self.storage.forecast_strategy_adjustments(model_version=model_version)
-                    if model_version
-                    else self.storage.forecast_strategy_adjustments()
+                cache[key] = self.storage.forecast_strategy_adjustments(
+                    model_version=model_version or FORECAST_MODEL_VERSION,
+                    inst_id=inst_id,
                 )
             return cache[key]
 

@@ -45,6 +45,10 @@ that QIS should copy or embed another trading engine.
    transparent fields: core sample count, core hit rate, and projection state.
 5. The terminal remains paper/manual-only. Research metrics cannot authorize an
    order or bypass position risk controls.
+6. Forecast calibration is scoped to instrument plus model version and is
+   idempotent across live-price refreshes. Failed validation is presented as
+   "no validated direction" with a realized-volatility envelope; shrunken audit
+   values remain stored for evaluation but are not promoted as point forecasts.
 
 ## Next engineering priorities
 

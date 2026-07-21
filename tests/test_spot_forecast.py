@@ -258,6 +258,10 @@ def test_cached_forecasts_rebuild_latest_dashboard_template(tmp_path) -> None:
     assert "upProbability:'上涨概率'" in html
     assert "downProbability:'下跌概率'" in html
     assert "futureTrend:'未来走势'" in html
+    assert "noValidDirection:'暂无有效方向'" in html
+    assert "function renderForecastPath(row)" in html
+    assert "function selectedChartForecast()" in html
+    assert "loadRangeCandles(selectedChartForecast())" in html
     assert "tradingVolume:'成交量'" in html
     assert 'id="volumeRatio"' in html
     assert 'id="decisionChart"' in html

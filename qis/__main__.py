@@ -220,12 +220,16 @@ def _render_spot(settings, output: Path) -> None:
     calibrated_forecasts = []
     for forecast in forecasts:
         raw = forecast if isinstance(forecast, dict) else asdict(forecast)
-        calibrated = apply_strategy_adjustments(raw, adjustments)
-        calibrated_variants = []
         forecast_inst_id = str(raw["inst_id"])
+        asset_adjustments = storage.forecast_strategy_adjustments(
+            inst_id=forecast_inst_id,
+        )
+        calibrated = apply_strategy_adjustments(raw, asset_adjustments)
+        calibrated_variants = []
         for variant in strategy_suites.get(forecast_inst_id, []):
             variant_adjustments = storage.forecast_strategy_adjustments(
                 model_version=str(variant["model_version"]),
+                inst_id=forecast_inst_id,
             )
             calibrated_variant = apply_strategy_adjustments(
                 variant,

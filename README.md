@@ -3,7 +3,7 @@
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-95%20passing-2ea44f)](#testing)
+[![Tests](https://img.shields.io/badge/tests-98%20passing-2ea44f)](#testing)
 [![Mode](https://img.shields.io/badge/default-paper%20trading-cba45f)](#safety-boundaries)
 [![GitHub last commit](https://img.shields.io/github/last-commit/xietingwei/okx-semi-auto-quant)](https://github.com/xietingwei/okx-semi-auto-quant/commits/main)
 
@@ -79,6 +79,14 @@ New strategies use isolated model versions and independent evaluation records.
 The production forecast surface is limited to **1 day, 3 days, 7 days, and 14 days**. Three days is the primary decision horizon, seven days is confirmation, one day is execution timing, and 14 days is risk context only. The system no longer emits point forecasts for one, three, or six months; those horizons are too unstable to be useful trading references.
 
 The opportunity radar requires both clean short-term data and out-of-sample evidence. Duplicate, missing, stale, or insufficient candles cap the opportunity score at 39 and produce an observation-only decision. The 3-day and 7-day horizons also need independent validation windows and an edge over baseline before they become actionable.
+
+Calibration is isolated per instrument and model version. BTC outcomes cannot
+shrink ETH, stocks cannot calibrate crypto, and a live quote refresh reuses the
+stored raw model output instead of calibrating an already adjusted value again.
+When an instrument has not beaten its own simple baseline—or its calibrated move
+is below the horizon's noise threshold—the UI shows **no validated direction**
+and a one-standard-deviation realized-volatility envelope. It does not display a
+tiny shrunken return as if it were a useful point forecast.
 
 Chart ranges (**1D, 1M, 3M, 6M, 1Y, ALL**) describe historical coverage, not forecast horizons. Crypto charts request real OKX intervals such as 5m, 1H, 2H, 4H, 12H, and 1D and merge live plus paginated history. External equities are daily-only; the UI never relabels daily candles as hourly data.
 Until enough strategy-specific outcomes mature, they remain marked
@@ -293,9 +301,10 @@ forecast matures, it records the realized return and updates:
 - Brier probability score;
 - prediction-interval coverage.
 
-Calibration uses recency-weighted, bounded shrinkage. It may reduce confidence
-or pull a forecast toward neutral, but cross-market calibration cannot reverse
-an individual instrument's original direction.
+Calibration uses recency-weighted, bounded shrinkage scoped to each instrument
+and model version. It may reduce confidence or pull a forecast toward neutral,
+but it cannot borrow another asset's outcomes, reverse the original direction,
+or be applied twice during a live-price refresh.
 
 Model upgrades and strategy variants use separate version identifiers so old
 errors do not silently contaminate new algorithms.

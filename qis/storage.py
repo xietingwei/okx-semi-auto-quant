@@ -730,20 +730,24 @@ class Storage:
         self,
         minimum_samples: int = 30,
         model_version: str = FORECAST_MODEL_VERSION,
+        inst_id: str | None = None,
     ) -> dict[str, dict]:
         self.init()
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
-            completed = list(
-                conn.execute(
-                    """
-                    SELECT * FROM spot_forecast_evaluations
-                    WHERE actual_price IS NOT NULL AND model_version = ?
-                    ORDER BY evaluated_at DESC LIMIT 5000
-                    """,
-                    (model_version,),
-                )
-            )
+            conditions = ["actual_price IS NOT NULL", "model_version = ?"]
+            params: list[object] = [model_version]
+            if inst_id:
+                conditions.append("inst_id = ?")
+                params.append(inst_id)
+            completed = list(conn.execute(
+                f"""
+                SELECT * FROM spot_forecast_evaluations
+                WHERE {' AND '.join(conditions)}
+                ORDER BY evaluated_at DESC LIMIT 5000
+                """,
+                tuple(params),
+            ))
         result: dict[str, dict] = {}
         for horizon in FORECAST_KEYS:
             rows = [row for row in completed if row["horizon"] == horizon][:1200]
@@ -800,13 +804,12 @@ class Storage:
             )
             return_scale = _clip(raw_return_scale, 0.12, 1.20)
             return_scale *= 0.35 + 0.65 * direction_reliability
-            # Global additive intercepts can reverse every asset at once. A
-            # cross-asset calibrator may shrink conviction, but must not decide
-            # direction for an individual instrument.
+            # An additive intercept can reverse an instrument's latest signal.
+            # Calibration may shrink conviction, but must not decide direction.
             return_shift = 0.0
 
-            # Calibrate probability slope around 50%. Do not apply a global
-            # base-rate offset because it can flip the whole market together.
+            # Calibrate probability slope around 50%. Avoid a base-rate offset
+            # because it can flip the instrument's current direction.
             centered_probabilities = [value - 0.5 for value in probabilities]
             centered_outcomes = [value - 0.5 for value in actual_up]
             probability_covariance = weighted([
@@ -840,7 +843,7 @@ class Storage:
                 "edge": direction_accuracy - baseline_accuracy,
                 "coverage": coverage,
                 "test_windows": test_windows,
-                "calibration_method": "direction_preserving_shrinkage_v3",
+                "calibration_method": "per_asset_direction_preserving_shrinkage_v4",
             }
         return result
 

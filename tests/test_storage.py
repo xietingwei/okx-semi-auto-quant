@@ -1,6 +1,8 @@
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from qis.models import Side, Signal, TradePlan, utc_now
 from qis.storage import Storage
 
@@ -193,3 +195,55 @@ def test_forecast_learning_run_is_auditable(tmp_path: Path) -> None:
     assert latest["total_samples"] == 120
     assert latest["active_horizons"] == 1
     assert latest["adjustments"]["1d"]["active"] is True
+
+
+def test_forecast_calibration_isolated_by_instrument(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "qis.sqlite3")
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    horizons = (("1d", 1), ("3d", 3), ("1w", 7), ("2w", 14))
+    for index in range(32):
+        direction = 1 if index % 2 == 0 else -1
+        for inst_id, actual_direction in (
+            ("BTC-USDT", direction),
+            ("ETH-USDT", -direction),
+        ):
+            expected_return = direction * 0.05
+            forecast = {
+                "inst_id": inst_id,
+                "current_price": 100.0,
+                "forecasts": [
+                    {
+                        "key": key,
+                        "days": days,
+                        "target": 100.0 * (1 + expected_return),
+                        "low": 90.0,
+                        "high": 110.0,
+                        "expected_return": expected_return,
+                        "up_probability": 0.70 if direction > 0 else 0.30,
+                        "confidence": 0.70,
+                    }
+                    for key, days in horizons
+                ],
+            }
+            actual_prices = {
+                key: 100.0 * (1 + actual_direction * 0.04)
+                for key, _ in horizons
+            }
+            storage.record_historical_forecast_outcome(
+                forecast,
+                start + timedelta(days=index),
+                actual_prices,
+            )
+
+    btc = storage.forecast_strategy_adjustments(inst_id="BTC-USDT")
+    eth = storage.forecast_strategy_adjustments(inst_id="ETH-USDT")
+    market = storage.forecast_strategy_adjustments()
+
+    assert btc["3d"]["direction_accuracy"] > 0.99
+    assert btc["3d"]["edge"] > 0.49
+    assert eth["3d"]["direction_accuracy"] < 0.01
+    assert market["3d"]["direction_accuracy"] == pytest.approx(0.5, abs=0.01)
+    assert (
+        btc["3d"]["calibration_method"]
+        == "per_asset_direction_preserving_shrinkage_v4"
+    )
