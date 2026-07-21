@@ -8,6 +8,7 @@ import threading
 import time
 from urllib.parse import parse_qs, urlparse
 
+from qis.config import Settings
 from qis.deep_analysis import (
     DEEP_ANALYSIS_MAX_DAYS,
     DeepAnalysisEngine,
@@ -18,6 +19,7 @@ from qis.forecast_learning import apply_strategy_adjustments, hour_bucket
 from qis.models import Candle
 from qis.okx import OkxClient, OkxError
 from qis.position_risk import analyze_position
+from qis.runtime import QisRuntime, create_runtime
 from qis.spot_dashboard import render_spot_dashboard_cache
 from qis.spot_forecast import FORECAST_MODEL_VERSION, SpotForecastEngine
 from qis.storage import Storage
@@ -61,22 +63,34 @@ CANDLE_BAR_HOURS = {
 
 
 class LiveQuoteService:
-    def __init__(self, ttl_seconds: float = 2.0) -> None:
+    def __init__(self, market_client=None, ttl_seconds: float = 2.0) -> None:
+        self.market_client = market_client or OkxClient()
         self.ttl_seconds = ttl_seconds
         self._updated = 0.0
         self._quotes: dict[str, dict] = {}
         self._lock = threading.Lock()
-        threading.Thread(target=self._run, daemon=True, name="qis-live-quotes").start()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run,
+            daemon=True,
+            name="qis-live-quotes",
+        )
+        self._thread.start()
 
     def quotes(self) -> dict[str, dict]:
         with self._lock:
             return dict(self._quotes)
 
+    def close(self) -> None:
+        self._stop.set()
+        if self._thread.is_alive() and self._thread is not threading.current_thread():
+            self._thread.join(timeout=max(1.0, self.ttl_seconds + 0.5))
+
     def _run(self) -> None:
-        while True:
+        while not self._stop.is_set():
             for inst_type in ("SPOT", "SWAP"):
                 try:
-                    rows = OkxClient().public_tickers(inst_type)
+                    rows = self.market_client.public_tickers(inst_type)
                 except OkxError:
                     continue
                 if rows:
@@ -89,7 +103,7 @@ class LiveQuoteService:
                             }
                         )
                         self._updated = time.monotonic()
-            time.sleep(self.ttl_seconds)
+            self._stop.wait(self.ttl_seconds)
 
 
 class QisRequestHandler(SimpleHTTPRequestHandler):
@@ -99,10 +113,12 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
         directory: str,
         storage: Storage,
         quote_service: LiveQuoteService,
+        market_client=None,
         **kwargs,
     ) -> None:
         self.storage = storage
         self.quote_service = quote_service
+        self.market_client = market_client
         super().__init__(*args, directory=directory, **kwargs)
 
     def end_headers(self) -> None:
@@ -234,7 +250,7 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
             limit = _candle_limit(range_spec, bar, bool(normalized_requested_bar))
             degraded = False
             try:
-                client = OkxClient()
+                client = getattr(self, "market_client", None) or OkxClient()
                 range_fetcher = getattr(client, "public_range_candles", None)
                 if (range_spec or limit > 300) and callable(range_fetcher):
                     # Fetch the live edge plus paginated history. This keeps
@@ -478,7 +494,13 @@ class QisRequestHandler(SimpleHTTPRequestHandler):
         return calibrated
 
 
-def serve(host: str, port: int, data_dir: Path, db_path: Path) -> None:
+def serve(
+    host: str,
+    port: int,
+    data_dir: Path,
+    db_path: Path,
+    settings: Settings | None = None,
+) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     render_spot_dashboard_cache(
         data_dir / "spot_forecasts.json",
@@ -496,7 +518,9 @@ def serve(host: str, port: int, data_dir: Path, db_path: Path) -> None:
             adjustments,
             storage.forecast_advice(),
         )
-    quote_service = LiveQuoteService()
+    runtime: QisRuntime | None = create_runtime(settings) if settings else None
+    market_client = runtime.okx if runtime else OkxClient()
+    quote_service = LiveQuoteService(market_client)
 
     def handler(*args, **kwargs):
         return QisRequestHandler(
@@ -504,12 +528,19 @@ def serve(host: str, port: int, data_dir: Path, db_path: Path) -> None:
             directory=str(data_dir),
             storage=storage,
             quote_service=quote_service,
+            market_client=market_client,
             **kwargs,
         )
 
     server = ThreadingHTTPServer((host, port), handler)
     print(f"QIS spot web server: http://{host}:{port}", flush=True)
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+        quote_service.close()
+        if runtime is not None:
+            runtime.close()
 
 
 def _positive(value: object, name: str) -> float:

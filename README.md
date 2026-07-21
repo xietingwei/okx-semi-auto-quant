@@ -3,7 +3,7 @@
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-107%20passing-2ea44f)](#testing)
+[![Tests](https://img.shields.io/badge/tests-110%20passing-2ea44f)](#testing)
 [![Mode](https://img.shields.io/badge/default-paper%20trading-cba45f)](#safety-boundaries)
 [![GitHub last commit](https://img.shields.io/github/last-commit/xietingwei/okx-semi-auto-quant)](https://github.com/xietingwei/okx-semi-auto-quant/commits/main)
 
@@ -143,9 +143,14 @@ ordinary entry candidates.
 
 ```mermaid
 flowchart LR
-    OKX["OKX REST market data"] --> Engine["Forecast engines"]
-    Macro["Macro & news sources"] --> Factors["Market context"]
-    Factors --> Engine
+    CLI["CLI / background services"] --> Main["QisRuntime / MainEngine"]
+    Main --> Bus["EventEngine"]
+    Main --> OKX["OkxGateway"]
+    Main --> Apps["MarketDataApp / StrategyApp"]
+    OKX -->|"bar / tick / account events"| Bus
+    Bus --> Apps
+    Apps --> Engine["Short-horizon forecast and risk engines"]
+    Macro["Macro, news and read-only event sources"] --> Engine
     Engine --> Cal["Walk-forward calibration"]
     Cal --> API["Local HTTP API"]
     PM["Polymarket public markets"] --> Evidence["Read-only event evidence"]
@@ -157,6 +162,10 @@ flowchart LR
     Engine --> DB[("SQLite audit trail")]
     DB --> Cal
 ```
+
+The platform follows vn.py's event-engine, main-engine, gateway, and pluggable
+application model without importing its Qt desktop dependency stack. See the
+[architecture and migration map](docs/VNPY_ARCHITECTURE.md).
 
 ## Quick Start
 

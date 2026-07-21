@@ -3,7 +3,7 @@
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![测试](https://img.shields.io/badge/tests-107%20passing-2ea44f)](#测试)
+[![测试](https://img.shields.io/badge/tests-110%20passing-2ea44f)](#测试)
 [![模式](https://img.shields.io/badge/default-paper%20trading-cba45f)](#安全边界)
 [![最近提交](https://img.shields.io/github/last-commit/xietingwei/okx-semi-auto-quant)](https://github.com/xietingwei/okx-semi-auto-quant/commits/main)
 
@@ -114,9 +114,14 @@ Polymarket 被接入为独立的 **事件证据层**。系统只读取未来 14 
 
 ```mermaid
 flowchart LR
-    OKX["OKX REST 行情"] --> Engine["预测引擎"]
-    Macro["宏观与资讯数据"] --> Factors["市场环境"]
-    Factors --> Engine
+    CLI["CLI / 后台服务"] --> Main["QisRuntime / MainEngine"]
+    Main --> Bus["EventEngine"]
+    Main --> OKX["OkxGateway"]
+    Main --> Apps["MarketDataApp / StrategyApp"]
+    OKX -->|"K线 / Ticker / 账户事件"| Bus
+    Bus --> Apps
+    Apps --> Engine["短线预测与风控引擎"]
+    Macro["宏观、资讯与只读事件源"] --> Engine
     Engine --> Cal["前向验证与校准"]
     Cal --> API["本地 HTTP API"]
     PM["Polymarket 公开市场"] --> Evidence["只读事件证据"]
@@ -128,6 +133,10 @@ flowchart LR
     Engine --> DB[("SQLite 审计记录")]
     DB --> Cal
 ```
+
+平台采用 vn.py 的事件引擎、主引擎、网关和可插拔应用模型，但不引入其 Qt
+桌面依赖栈。完整设计取舍与迁移边界见
+[vn.py 风格架构说明](docs/VNPY_ARCHITECTURE.md)。
 
 ## 快速开始
 

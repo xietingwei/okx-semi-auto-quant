@@ -129,3 +129,8 @@ If a test creates manual position records in `data/qis.sqlite3`, use a unique
 - Assistant failures may be due to LLM/network configuration, but the UI should
   still stream a clear error event and re-enable the send button.
 - Current launch scripts bind the web app to `127.0.0.1:8787`.
+- QIS now has a vn.py-style headless platform kernel. New exchange/data-source
+  access should be implemented as a gateway under `qis/gateway/`; independent
+  business capabilities should be apps under `qis/app/`; process composition
+  belongs in `qis/runtime.py`. Do not reintroduce direct `OkxClient`
+  construction into CLI/service flows. See `docs/VNPY_ARCHITECTURE.md`.

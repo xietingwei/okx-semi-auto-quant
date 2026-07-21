@@ -32,6 +32,7 @@ from qis.polymarket import (
 )
 from qis.risk import RiskEngine, RiskLimits
 from qis.runner import Runner
+from qis.runtime import QisRuntime, create_runtime
 from qis.storage import Storage
 from qis.spot_dashboard import render_spot_dashboard
 from qis.spot_forecast import SpotForecastEngine
@@ -39,6 +40,7 @@ from qis.short_term import canonicalize_candles
 from qis.ml_shadow import attach_shadow_brain
 from qis.strategy import DonchianBreakoutStrategy
 from qis.us_stocks import YahooFinanceClient, UsStockError, UsStockHistory
+from qis.trader.object import HistoryRequest
 from qis.web_server import serve
 
 
@@ -76,12 +78,16 @@ def _discover_spot_ids(client: OkxClient, settings) -> tuple[str, ...]:
 
 
 def _render_spot(settings, output: Path) -> None:
-    client = OkxClient(
-        settings.okx_api_key,
-        settings.okx_api_secret,
-        settings.okx_api_passphrase,
-        settings.okx_simulated,
-    )
+    with create_runtime(settings) as runtime:
+        _render_spot_with_runtime(settings, output, runtime)
+
+
+def _render_spot_with_runtime(
+    settings,
+    output: Path,
+    runtime: QisRuntime,
+) -> None:
+    client = runtime.okx
     engine = SpotForecastEngine()
     storage = Storage(settings.db_path)
     forecasts = []
@@ -91,11 +97,8 @@ def _render_spot(settings, output: Path) -> None:
     candles_by_inst = {}
     def fetch_candles(inst_id: str):
         try:
-            history_fetcher = getattr(client, "public_range_candles", None)
-            candles = (
-                history_fetcher(inst_id, "1D", limit=300)
-                if callable(history_fetcher)
-                else client.public_candles(inst_id, "1D", limit=300)
+            candles = runtime.market_data.query_history(
+                HistoryRequest(inst_id, "1D", 300)
             )
             return inst_id, candles, None
         except OkxError as exc:
@@ -386,6 +389,22 @@ def _ticker_map(client: OkxClient) -> dict[str, dict]:
     return {str(item.get("instId")): item for item in rows if item.get("instId")}
 
 
+def _scan_opportunities(settings, args, analyzer: MarketAnalyzer) -> list:
+    opportunities = []
+    scan_ids = tuple(dict.fromkeys(settings.inst_ids + settings.stock_inst_ids))
+    with create_runtime(settings) as runtime:
+        for inst_id in scan_ids:
+            try:
+                candles = runtime.market_data.query_history(
+                    HistoryRequest(inst_id, settings.bar, args.limit)
+                )
+            except OkxError as exc:
+                print(f"Skip {inst_id}: {exc}")
+                continue
+            opportunities.extend(analyzer.analyze(inst_id, candles))
+    return opportunities
+
+
 def _backfill_forecast_history(
     storage: Storage,
     engine: SpotForecastEngine,
@@ -520,11 +539,13 @@ def main() -> None:
                 print(f"Spot refresh failed: {exc}", flush=True)
             time.sleep(max(60, args.interval))
     if args.command == "web":
-        serve(args.host, args.port, Path("data"), settings.db_path)
+        serve(args.host, args.port, Path("data"), settings.db_path, settings)
         return
     if args.command == "backtest":
-        client = OkxClient(settings.okx_api_key, settings.okx_api_secret, settings.okx_api_passphrase, settings.okx_simulated)
-        candles = client.public_candles(settings.inst_id, settings.bar, limit=args.limit)
+        with create_runtime(settings) as runtime:
+            candles = runtime.market_data.query_history(
+                HistoryRequest(settings.inst_id, settings.bar, args.limit)
+            )
         strategy = DonchianBreakoutStrategy(
             settings.donchian_lookback,
             settings.atr_period,
@@ -556,7 +577,6 @@ def main() -> None:
             )
         return
     if args.command == "analyze":
-        client = OkxClient(settings.okx_api_key, settings.okx_api_secret, settings.okx_api_passphrase, settings.okx_simulated)
         macro = None if args.no_macro else MacroAnalyzer().analyze()
         if macro is not None:
             print(f"Macro regime: {macro.label} score={macro.risk_score:.2f} {macro.reason}")
@@ -587,15 +607,7 @@ def main() -> None:
         else:
             print("Real calibration: no manual trades recorded yet")
         analyzer = MarketAnalyzer(settings.donchian_lookback, settings.atr_period, settings.atr_multiplier, macro=macro, intel=intel)
-        opportunities = []
-        scan_ids = tuple(dict.fromkeys(settings.inst_ids + settings.stock_inst_ids))
-        for inst_id in scan_ids:
-            try:
-                candles = client.public_candles(inst_id, settings.bar, limit=args.limit)
-            except OkxError as exc:
-                print(f"Skip {inst_id}: {exc}")
-                continue
-            opportunities.extend(analyzer.analyze(inst_id, candles))
+        opportunities = _scan_opportunities(settings, args, analyzer)
         ranked = sorted(opportunities, key=lambda item: item.score, reverse=True)
         threshold = settings.min_success_probability if args.min_success is None else args.min_success
         qualified = [
@@ -687,9 +699,11 @@ def main() -> None:
             print("Already resumed.")
         return
     if args.command == "run":
-        Runner(settings).run(once=args.once)
+        with Runner(settings) as runner:
+            runner.run(once=args.once)
     if args.command == "scan":
-        Runner(settings).scan()
+        with Runner(settings) as runner:
+            runner.scan()
 
 
 if __name__ == "__main__":

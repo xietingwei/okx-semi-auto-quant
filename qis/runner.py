@@ -2,52 +2,62 @@ from __future__ import annotations
 
 import time
 
+from qis.app.strategy import StrategyApp, StrategyEngine
 from qis.config import Settings
+from qis.event import Event
 from qis.models import AccountState, Mode, TradePlan
-from qis.okx import OkxClient, OkxError
-from qis.risk import RiskEngine, RiskLimits
+from qis.okx import OkxError
+from qis.runtime import QisRuntime, create_runtime
 from qis.storage import Storage
-from qis.strategy import DonchianBreakoutStrategy
+from qis.trader.event import EVENT_ACCOUNT
+from qis.trader.object import HistoryRequest
 
 
 class Runner:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        runtime: QisRuntime | None = None,
+    ) -> None:
         self.settings = settings
-        self.client = OkxClient(
-            settings.okx_api_key,
-            settings.okx_api_secret,
-            settings.okx_api_passphrase,
-            settings.okx_simulated,
-        )
+        self.runtime = runtime or create_runtime(settings)
+        self.client = self.runtime.okx
         self.storage = Storage(settings.db_path)
-        self.strategy = DonchianBreakoutStrategy(
-            settings.donchian_lookback,
-            settings.atr_period,
-            settings.atr_multiplier,
-            settings.ema_fast,
-            settings.ema_slow,
+        strategy_engine = self.runtime.main_engine.add_app(
+            StrategyApp,
+            settings,
         )
-        self.risk = RiskEngine(
-            RiskLimits(
-                risk_per_trade=settings.risk_per_trade,
-                daily_loss_limit=settings.daily_loss_limit,
-                max_drawdown=settings.max_drawdown,
-                max_leverage=settings.max_leverage,
-                max_notional_pct=settings.max_notional_pct,
-                max_trades_per_day=settings.max_trades_per_day,
-            )
-        )
+        if not isinstance(strategy_engine, StrategyEngine):
+            self.runtime.close()
+            raise TypeError("StrategyApp installed an invalid engine")
+        self.strategy_engine = strategy_engine
+        # Compatibility attributes for callers that inspect the current
+        # strategy/risk configuration.
+        self.strategy = strategy_engine.strategy
+        self.risk = strategy_engine.risk
+
+    def close(self) -> None:
+        self.runtime.close()
+
+    def __enter__(self) -> "Runner":
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.close()
 
     def run(self, once: bool = False) -> None:
         self.storage.init()
-        while True:
-            try:
-                self.tick()
-            except Exception as exc:
-                print(f"Tick failed, retrying on next interval: {exc}", flush=True)
-            if once:
-                return
-            time.sleep(self.settings.loop_seconds)
+        try:
+            while True:
+                try:
+                    self.tick()
+                except Exception as exc:
+                    print(f"Tick failed, retrying on next interval: {exc}", flush=True)
+                if once:
+                    return
+                time.sleep(self.settings.loop_seconds)
+        finally:
+            self.close()
 
     def tick(self) -> TradePlan | None:
         if self.settings.pause_file.exists():
@@ -55,12 +65,17 @@ class Runner:
             return None
         account = self._account_state()
         self.storage.save_account(account)
-        candles = self.client.public_candles(self.settings.inst_id, self.settings.bar, limit=120)
-        signal = self.strategy.generate(self.settings.inst_id, candles)
-        if signal is None:
+        candles = self.runtime.market_data.query_history(
+            HistoryRequest(self.settings.inst_id, self.settings.bar, 120)
+        )
+        plan = self.strategy_engine.evaluate(
+            self.settings.inst_id,
+            candles,
+            account,
+        )
+        if plan is None:
             print(f"No signal for {self.settings.inst_id} on {self.settings.bar}.")
             return None
-        plan = self.risk.build_plan(signal, account)
         self.storage.save_plan(plan)
         self._print_plan(plan)
         if plan.approved and self.settings.mode is Mode.LIVE:
@@ -75,12 +90,13 @@ class Runner:
         self.storage.save_account(account)
         plans: list[TradePlan] = []
         for inst_id in tuple(dict.fromkeys(self.settings.inst_ids + self.settings.stock_inst_ids)):
-            candles = self.client.public_candles(inst_id, self.settings.bar, limit=120)
-            signal = self.strategy.generate(inst_id, candles)
-            if signal is None:
+            candles = self.runtime.market_data.query_history(
+                HistoryRequest(inst_id, self.settings.bar, 120)
+            )
+            plan = self.strategy_engine.evaluate(inst_id, candles, account)
+            if plan is None:
                 print(f"No signal for {inst_id} on {self.settings.bar}.")
                 continue
-            plan = self.risk.build_plan(signal, account)
             self.storage.save_plan(plan)
             self._print_plan(plan)
             plans.append(plan)
@@ -96,13 +112,17 @@ class Runner:
                     raise
                 print(f"Private account unavailable, using configured paper equity: {exc}")
         equity = equity or self.settings.initial_equity
-        return AccountState(
+        account = AccountState(
             equity=equity,
             peak_equity=max(equity, self.settings.initial_equity),
             daily_pnl=0.0,
             open_notional=0.0,
             trades_today=self.storage.approved_trades_today(),
         )
+        self.runtime.event_engine.put(
+            Event(EVENT_ACCOUNT, account, source="Runner")
+        )
+        return account
 
     def _has_credentials(self) -> bool:
         return bool(self.settings.okx_api_key and self.settings.okx_api_secret and self.settings.okx_api_passphrase)

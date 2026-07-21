@@ -1,0 +1,11 @@
+"""Stable event names shared by QIS gateways and application engines."""
+
+EVENT_LOG = "eLog"
+EVENT_GATEWAY_STATUS = "eGatewayStatus"
+EVENT_BAR = "eBar"
+EVENT_TICK = "eTick"
+EVENT_ACCOUNT = "eAccount"
+EVENT_SIGNAL = "eSignal"
+EVENT_TRADE_PLAN = "eTradePlan"
+EVENT_FORECAST = "eForecast"
+EVENT_FORECAST_BATCH = "eForecastBatch"

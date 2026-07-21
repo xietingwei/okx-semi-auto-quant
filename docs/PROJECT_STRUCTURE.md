@@ -33,6 +33,11 @@ because the launch scripts and generated dashboard paths are deliberately simple
 | `qis/decision_assistant.py` | OpenAI-compatible LLM request/streaming and decision-context construction. |
 | `qis/forecast_learning.py` | Walk-forward calibration and adjustment application. |
 | `qis/okx.py` | OKX REST client wrappers. |
+| `qis/event/` | Event-driven queue dispatch, timer, and handler isolation. |
+| `qis/trader/` | Main engine, gateway/app contracts, lifecycle, event names, and DTOs. |
+| `qis/gateway/` | Protocol adapters; the OKX gateway publishes domain events. |
+| `qis/app/` | Pluggable market-data and short-term strategy/risk engines. |
+| `qis/runtime.py` | Composition root for MainEngine, gateways, event bus, and apps. |
 | `qis/us_stocks.py` | Yahoo Finance daily-candle client for external US stock opportunity candidates. |
 | `qis/config.py` | Environment-backed runtime settings. |
 
@@ -44,12 +49,14 @@ The external benchmark and resulting priorities are recorded in
 ```text
 scripts/start.sh
   ├─ python3 -m qis spot-watch
-  │    ├─ fetches OKX/public market data
+  │    ├─ creates QisRuntime → MainEngine → OkxGateway/MarketDataApp
+  │    ├─ fetches OKX/public market data through the gateway
   │    ├─ fetches qualified short-term Polymarket event evidence
   │    ├─ attaches shadow neural predictions to cached forecasts
   │    ├─ writes data/spot_forecasts.json
   │    └─ renders data/index.html from qis/spot_dashboard.py
   ├─ python3 -m qis web
+  │    ├─ owns a persistent event-driven runtime and shared OKX gateway
   │    ├─ serves http://127.0.0.1:8787/
   │    ├─ exposes /api/spot/positions, /buy, /sell, /delete
   │    ├─ exposes /api/deep-analysis for selected-symbol daily reviews
@@ -59,6 +66,9 @@ scripts/start.sh
   │    └─ streams /api/assistant/stream
   └─ python3 -m qis doctor
 ```
+
+The rationale and migration map are documented in
+[`docs/VNPY_ARCHITECTURE.md`](VNPY_ARCHITECTURE.md).
 
 ## Editing guidelines
 
