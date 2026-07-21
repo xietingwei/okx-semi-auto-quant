@@ -92,6 +92,13 @@ def assess_short_term_data(
     if stale_hours > 72.0:
         warnings.append("最新K线距当前超过72小时")
     quality = "A" if score >= 0.86 else "B" if score >= 0.70 else "C" if score >= 0.52 else "D"
+    # A high bar count cannot mask structural defects.  Keep the numeric
+    # score for diagnostics, but make the displayed grade conservative when
+    # an actual gap or insufficient sample depth is present.
+    if gap_hours or len(unique) < min_bars:
+        quality = "C" if score >= 0.52 else "D"
+    elif stale_hours > 72.0 and quality == "A":
+        quality = "B"
     actionable = (
         len(unique) >= min_bars
         and not gap_hours

@@ -31,6 +31,7 @@ def test_short_term_quality_detects_duplicate_and_missing_bars() -> None:
 
     assert report["duplicate_bars"] == 1
     assert report["gap_count"] == 1
+    assert report["quality"] == "C"
     assert report["actionable"] is False
     assert "历史缺口" in "；".join(report["warnings"])
 
