@@ -347,7 +347,7 @@ HTML = r"""<!DOCTYPE html>
       if(fallback.candles.length)drawDecisionChart(fallback.candles,forecast,true,{...fallback,warning:t('loadingCandles')});else{$('decisionChart').innerHTML='<text class="chart-loading" x="420" y="220">'+t('loadingCandles')+'</text>';$('chartReadout').textContent='';$('chartStats').textContent=''}
       const request=++chartRequestId,requestedRange=chartRange,requestedInterval=interval;
       try{
-        const query='range='+encodeURIComponent(requestedRange)+(interval?'&bar='+encodeURIComponent(interval):''),response=await fetch('/api/spot/candles?inst_id='+encodeURIComponent(inst)+'&'+query,{cache:'no-store'}),payload=await response.json();
+        const legacyRangeQuery='&range='+encodeURIComponent(requestedRange),query=interval?'range='+encodeURIComponent(requestedRange)+'&bar='+encodeURIComponent(interval):legacyRangeQuery.slice(1),response=await fetch('/api/spot/candles?inst_id='+encodeURIComponent(inst)+'&'+query,{cache:'no-store'}),payload=await response.json();
         if(!response.ok)throw new Error(payload.error||t('loadingCandles'));
         if(request!==chartRequestId||!asset||asset.inst_id!==inst||chartRange!==requestedRange||chartInterval!==requestedInterval)return;
         const normalized={bar:payload.bar||interval||'1D',range:requestedRange,candles:payload.candles||[],coverage:payload.coverage||(payload.candles||[]).length,source:payload.source||'',from:payload.from||'',to:payload.to||''};
